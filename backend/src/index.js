@@ -19,23 +19,11 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// CORS: acepta orígenes configurados + cualquier subdominio vercel.app
-const staticOrigins = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173')
-  .split(',').map((s) => s.trim());
-
+// CORS: abierto a todos los orígenes.
+// La seguridad está en el JWT de Supabase que valida cada request.
 app.use(cors({
+  origin: (origin, cb) => cb(null, true),
   credentials: true,
-  origin: (origin, cb) => {
-    // Permitir requests sin origin (curl, Postman, mobile apps)
-    if (!origin) return cb(null, true);
-    // Permitir orígenes en la lista
-    if (staticOrigins.includes(origin)) return cb(null, true);
-    // Permitir cualquier subdominio de vercel.app
-    if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) return cb(null, true);
-    // Permitir localhost en cualquier puerto (desarrollo)
-    if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
-    cb(new Error(`CORS bloqueado para origen: ${origin}`));
-  },
 }));
 
 // Healthcheck público
