@@ -1,9 +1,13 @@
 // Pool de conexión a PostgreSQL (Supabase) + cliente Supabase con service role.
+import dns from 'dns';
 import pg from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+// Forzar IPv4 — Render free tier no soporta IPv6.
+dns.setDefaultResultOrder('ipv4first');
 
 const { Pool } = pg;
 
