@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"/Users/pilarlioi/Downloads/Posicion_Todos_Los_Fondos_Todos_Los_Grupos_fecha_2026-05-30.xlsx\" 2>&1 | head -5)",
+      "Read(//private/tmp/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(pip3 install *)",
+      "Bash(curl -s \"https://mindicador.cl/api/dolar\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s \"https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,clp\")",
+      "Bash(curl -s \"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=AAPL&apikey=demo\")",
+      "Bash(curl -s \"https://fintual.cl/api/real_assets\")",
+      "Bash(curl -s \"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=IBM&apikey=demo\")",
+      "Bash(curl -s \"https://www.spensiones.cl/apps/valoresCuotaFondo/vcfAFP.php?aaaa=2026&mm=05&fondo=A\" -o /tmp/sp.html)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -H \"Accept: application/json\" \"https://fintualist.com/api/real_assets\")",
+      "Bash(curl -s \"https://fintual.cl/api/real_assets?provider=Fintual\")",
+      "Bash(curl -s \"https://fintual.cl/api/real_assets?page=1&per_page=20\")",
+      "Bash(curl -sL \"https://www.spensiones.cl/cumplimiento/valoresCuotaFondo/vcfAFP.php?aaaa=2026&mm=05&fondo=A\")",
+      "Bash(curl -sL -o /tmp/sp2.html \"https://www.spensiones.cl/apps/valoresCuotaFondo/vcfAFP.php\")",
+      "Bash(curl -sL \"https://fintual.com/api/real_assets\" -H \"Accept: application/json\")",
+      "Bash(curl -sL \"https://fintual.com/api/real_assets?name=Norris\" -H \"Accept: application/json\")",
+      "Bash(curl -sL https://fintual.com/api/real_assets -H 'Accept: application/json' -H 'User-Agent: Mozilla/5.0')",
+      "Bash(curl -sI \"https://fintual.com/api/real_assets\")",
+      "Bash(curl -s \"https://mindicador.cl/api\")",
+      "Bash(curl -sL \"https://www.cmfchile.cl/institucional/estadisticas/fm.bpr_menu.php\" -o /tmp/cmf.html)",
+      "Bash(curl -sL \"https://www.cmfchile.cl/institucional/estadisticas/fm_recibe.php?rutadm=76810627&dvadm=4\" -o /tmp/cmf2.html)",
+      "Bash(curl -sL \"https://www.cmfchile.cl/institucional/estadisticas/fm_bpr_dia.php?rutadm=76810627&dvadm=4&fondo=9570&serie=A&aaaa=2026&mm=05&dd=30\" -o /tmp/norris.html)",
+      "Bash(awk '/name=\"seriefecha\"/,/<\\\\/form>/' /tmp/cmf.html)",
+      "Bash(curl -sL -H \"User-Agent: Mozilla/5.0\" \"https://www.cmfchile.cl/institucional/estadisticas/fi.fi_bpr_menu.php\" -o /tmp/cmf_fi.html)",
+      "Bash(curl -sL -H \"User-Agent: Mozilla/5.0\" \"https://www.spensiones.cl/apps/valoresCuotaFondo/vcfAFP.php\" -o /tmp/sp_home.html)",
+      "Bash(curl -sL -H \"User-Agent: Mozilla/5.0\" \"https://www.spensiones.cl/apps/valoresCuotaFondo/vcfAFP.php?tf=A\" -o /tmp/sp_a2.html)",
+      "Bash(curl -sL -H 'User-Agent: Mozilla/5.0' -X POST -d 'aaaa=2026&mm=05&dd=27&btn=Buscar' https://www.spensiones.cl/apps/valoresCuotaFondo/vcfAFP.php?tf=A -o /tmp/sp_27may.html)",
+      "Bash(python3)",
+      "Bash(curl -sL --max-time 15 -H \"User-Agent: Mozilla/5.0\" \"https://www.cmfchile.cl/portal/principal/613/w3-propertyvalue-18585.html\" -o /tmp/cmf_menu.html)",
+      "Bash(grep -oE \"Fondos de Inversi[^<]{0,50}\" /tmp/cmf_menu.html)",
+      "Bash(curl -sL --max-time 15 -H \"User-Agent: Mozilla/5.0\" \"https://www.cmfchile.cl/institucional/estadisticas/fondos_cartola_diaria.php\" -o /tmp/cart.html)",
+      "Bash(curl -sL --max-time 15 -H \"User-Agent: Mozilla/5.0\" \"https://www.cmfchile.cl/portal/principal/613/w3-propertyvalue-18586.html\" -o /tmp/fi_menu.html)"
+    ]
+  }
+}
