@@ -19,10 +19,24 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// CORS: permitir orígenes del frontend
-const origins = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173')
+// CORS: acepta orígenes configurados + cualquier subdominio vercel.app
+const staticOrigins = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173')
   .split(',').map((s) => s.trim());
-app.use(cors({ origin: origins, credentials: true }));
+
+app.use(cors({
+  credentials: true,
+  origin: (origin, cb) => {
+    // Permitir requests sin origin (curl, Postman, mobile apps)
+    if (!origin) return cb(null, true);
+    // Permitir orígenes en la lista
+    if (staticOrigins.includes(origin)) return cb(null, true);
+    // Permitir cualquier subdominio de vercel.app
+    if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) return cb(null, true);
+    // Permitir localhost en cualquier puerto (desarrollo)
+    if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
+    cb(new Error(`CORS bloqueado para origen: ${origin}`));
+  },
+}));
 
 // Healthcheck público
 app.get('/api/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
