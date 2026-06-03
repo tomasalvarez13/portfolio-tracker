@@ -41,6 +41,21 @@ app.use('/api/market', requireAuth, marketRouter);
 // Rutas de IA
 app.use('/api/ai', requireAuth, aiRouter);
 
+// Endpoint para el cron externo (GitHub Actions). Protegido por CRON_SECRET.
+app.post('/api/cron/prices', async (req, res) => {
+  const secret = process.env.CRON_SECRET || 'cron-dev-secret';
+  const provided = req.headers['x-cron-secret'] || req.body?.secret;
+  if (provided !== secret) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const { runDailyJob } = await import('./jobs/dailyPriceFetch.js');
+    const result = await runDailyJob();
+    res.json({ ok: true, ...result.report });
+  } catch (e) {
+    console.error('[cron/prices]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Rutas admin (sistema de auth propio, NO usa Supabase JWT)
 app.use('/api/admin', adminRouter);
 

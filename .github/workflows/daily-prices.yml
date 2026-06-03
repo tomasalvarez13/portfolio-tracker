@@ -1,0 +1,30 @@
+name: Daily price refresh
+
+on:
+  schedule:
+    # 12:30 UTC = 08:30 Chile verano (UTC-4)
+    # 13:30 UTC = 08:30 Chile invierno (UTC-3)
+    # Corre ambos para cubrir el cambio de horario
+    - cron: '30 12 * * 1-5'
+    - cron: '30 13 * * 1-5'
+  workflow_dispatch: # permite correrlo manualmente desde GitHub
+
+jobs:
+  refresh-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake up backend and refresh prices
+        run: |
+          echo "Despertando el backend y actualizando precios..."
+          RESPONSE=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X POST "${{ secrets.BACKEND_URL }}/api/cron/prices" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            --max-time 120)
+          echo "HTTP status: $RESPONSE"
+          cat /tmp/response.json
+          if [ "$RESPONSE" != "200" ]; then
+            echo "Error: el backend respondió con $RESPONSE"
+            exit 1
+          fi
+          echo "Precios actualizados correctamente"
