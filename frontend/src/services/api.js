@@ -54,6 +54,19 @@ export const getTWR = (params) =>
 // --- Mercado ---
 export const getMarket = () => api.get('/market').then((r) => r.data);
 
+// --- Admin ---
+const adminApi = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api',
+});
+adminApi.interceptors.request.use((config) => {
+  const token = localStorage.getItem('admin_token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+export const adminLogin   = (body) => adminApi.post('/admin/auth', body).then(r => r.data);
+export const getAdminUsers = ()    => adminApi.get('/admin/users').then(r => r.data);
+export const getAdminStats = ()    => adminApi.get('/admin/stats').then(r => r.data);
+
 // --- IA ---
 export const parseCartola   = (formData) => api.post('/ai/parse-cartola', formData, {
   headers: { 'Content-Type': 'multipart/form-data' },

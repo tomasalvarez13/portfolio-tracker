@@ -23,7 +23,14 @@ export function AuthProvider({ children }) {
     loading,
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
     signUp: (email, password, name) =>
-      supabase.auth.signUp({ email, password, options: { data: { name } } }),
+      supabase.auth.signUp({
+        email, password,
+        options: {
+          data: { name },
+          // Redirigir al dominio real, no localhost
+          emailRedirectTo: `${window.location.origin}/`,
+        },
+      }),
     signOut: () => supabase.auth.signOut(),
   };
 

@@ -8,6 +8,8 @@ import Rentabilidad from './pages/Rentabilidad.jsx';
 import Mercado from './pages/Mercado.jsx';
 import Movimientos from './pages/Movimientos.jsx';
 import Chat from './pages/Chat.jsx';
+import AdminLogin from './pages/AdminLogin.jsx';
+import AdminDashboard from './pages/AdminDashboard.jsx';
 
 function ProtectedRoute({ children }) {
   const { session, loading } = useAuth();
@@ -40,6 +42,10 @@ export default function App() {
         <Route path="mercado" element={<Mercado />} />
         <Route path="chat"    element={<Chat />} />
       </Route>
+      {/* Admin — sistema de auth propio, fuera del ProtectedRoute de Supabase */}
+      <Route path="/admin/login" element={<AdminLogin />} />
+      <Route path="/admin"       element={<AdminDashboard />} />
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

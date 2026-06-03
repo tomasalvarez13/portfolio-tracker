@@ -41,8 +41,8 @@ app.use('/api/market', requireAuth, marketRouter);
 // Rutas de IA
 app.use('/api/ai', requireAuth, aiRouter);
 
-// Rutas admin (preparadas; la mayoría responde 501 en v1)
-app.use('/api/admin', requireAuth, requireAdmin, adminRouter);
+// Rutas admin (sistema de auth propio, NO usa Supabase JWT)
+app.use('/api/admin', adminRouter);
 
 // Handler de errores
 app.use((err, req, res, next) => {

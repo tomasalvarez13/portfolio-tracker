@@ -1,8 +1,27 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar.jsx';
 import BottomNav from './BottomNav.jsx';
+import OnboardingModal from '../OnboardingModal.jsx';
+import { useAuth } from '../../hooks/useAuth.jsx';
 
 export default function Layout() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const key = user?.id ? `onboarding_v1_${user.id}` : null;
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => key ? localStorage.getItem(key) !== 'done' : false
+  );
+
+  function handleDismiss(mode) {
+    if (key) localStorage.setItem(key, 'done');
+    setShowOnboarding(false);
+    if (mode === 'cartola') navigate('/posiciones');
+    else if (mode === 'manual') navigate('/posiciones');
+  }
+
   return (
     <div className="h-screen flex overflow-hidden">
       {/* Sidebar: solo desktop */}
@@ -19,6 +38,9 @@ export default function Layout() {
 
       {/* Bottom nav: solo mobile */}
       <BottomNav />
+
+      {/* Onboarding: se muestra la primera vez que entra */}
+      {showOnboarding && <OnboardingModal onDismiss={handleDismiss} />}
     </div>
   );
 }
