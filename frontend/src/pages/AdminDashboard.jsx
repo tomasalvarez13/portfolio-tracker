@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getAdminUsers, getAdminStats } from '../services/api';
+import { getAdminUsers, getAdminStats, deleteAdminUser } from '../services/api';
 import { formatDate } from '../utils/formatters';
 import { LogOut, Users, Activity, TrendingUp, Layers } from 'lucide-react';
 
@@ -22,8 +22,10 @@ export default function AdminDashboard() {
   const [stats, setStats]     = useState(null);
   const [users, setUsers]     = useState([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
-  const [search, setSearch]   = useState('');
+  const [loadError, setLoadError]     = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null); // id del usuario a eliminar
+  const [deleting, setDeleting]       = useState(false);
+  const [search, setSearch]           = useState('');
   const navigate              = useNavigate();
 
   async function loadData() {
@@ -46,6 +48,17 @@ export default function AdminDashboard() {
   }
 
   useEffect(() => { loadData(); }, []);
+
+  async function handleDelete(id) {
+    setDeleting(true);
+    try {
+      await deleteAdminUser(id);
+      setConfirmDelete(null);
+      await loadData();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message);
+    } finally { setDeleting(false); }
+  }
 
   function handleLogout() {
     localStorage.removeItem('admin_token');
@@ -134,6 +147,7 @@ export default function AdminDashboard() {
                   <th className="px-4 py-3 font-medium text-right">Posiciones</th>
                   <th className="px-4 py-3 font-medium text-right">Movimientos</th>
                   <th className="px-4 py-3 font-medium">Estado</th>
+                  <th className="px-4 py-3 font-medium text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -151,10 +165,28 @@ export default function AdminDashboard() {
                         {u.confirmed ? 'Confirmado' : 'Pendiente'}
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {confirmDelete === u.id ? (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="text-xs text-muted">¿Eliminar?</span>
+                          <button onClick={() => handleDelete(u.id)} disabled={deleting}
+                            className="text-xs text-loss font-medium hover:underline disabled:opacity-50">
+                            {deleting ? '…' : 'Sí'}
+                          </button>
+                          <button onClick={() => setConfirmDelete(null)}
+                            className="text-xs text-muted hover:text-gray-200">No</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => setConfirmDelete(u.id)}
+                          className="text-xs text-muted hover:text-loss transition-colors">
+                          eliminar
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-10 text-center text-muted">Sin usuarios.</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-muted">Sin usuarios.</td></tr>
                 )}
               </tbody>
             </table>

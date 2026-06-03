@@ -63,9 +63,10 @@ adminApi.interceptors.request.use((config) => {
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
-export const adminLogin   = (body) => adminApi.post('/admin/auth', body).then(r => r.data);
-export const getAdminUsers = ()    => adminApi.get('/admin/users').then(r => r.data);
-export const getAdminStats = ()    => adminApi.get('/admin/stats').then(r => r.data);
+export const adminLogin      = (body) => adminApi.post('/admin/auth', body).then(r => r.data);
+export const getAdminUsers   = ()     => adminApi.get('/admin/users').then(r => r.data);
+export const getAdminStats   = ()     => adminApi.get('/admin/stats').then(r => r.data);
+export const deleteAdminUser = (id)   => adminApi.delete(`/admin/users/${id}`);
 
 // --- IA ---
 export const parseCartola   = (formData) => api.post('/ai/parse-cartola', formData, {

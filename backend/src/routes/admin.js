@@ -100,4 +100,25 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// ── DELETE /api/admin/users/:id ───────────────────────────────────────────────
+// Elimina el usuario de Supabase Auth y todos sus datos del portafolio.
+router.delete('/users/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    // Borrar datos del portafolio de la DB (en orden para respetar FKs)
+    await query('DELETE FROM portfolio_snapshots WHERE user_id = $1', [id]);
+    await query('DELETE FROM movements          WHERE user_id = $1', [id]);
+    await query('DELETE FROM positions          WHERE user_id = $1', [id]);
+
+    // Borrar el usuario de Supabase Auth
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
+    if (error) throw error;
+
+    res.status(204).end();
+  } catch (e) {
+    console.error('[admin/delete-user]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
