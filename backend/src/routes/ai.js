@@ -1,7 +1,7 @@
-// Rutas de IA: parseo de cartola y chat de portafolio.
+// Rutas de IA: parseo de cartola y chat de portafolio — powered by Google Gemini.
 import { Router } from 'express';
 import multer from 'multer';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { query } from '../config/db.js';
 import { computePositions } from '../services/portfolioService.js';
 
@@ -17,17 +17,30 @@ const upload = multer({
 });
 
 function getClient() {
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY no configurada en el servidor');
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no configurada en el servidor');
+  return new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+}
+
+// ─── Helpers de formato ───────────────────────────────────────────────────────
+
+// Convierte mensajes del frontend { role:'user'|'assistant', content } al formato Gemini
+function toGeminiContents(messages) {
+  return messages
+    .filter(m => m.content)
+    .map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
 }
 
 // ─── POST /api/ai/parse-cartola ───────────────────────────────────────────────
-// Recibe un PDF o imagen, extrae posiciones con Claude y devuelve propuestas.
 router.post('/parse-cartola', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No se recibió archivo. Enviá un PDF o imagen.' });
 
   try {
-    const client = getClient();
+    const genAI = getClient();
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
     const { rows: instruments } = await query(
       'SELECT id, name, alias, ticker, type FROM instruments ORDER BY name'
     );
@@ -35,34 +48,32 @@ router.post('/parse-cartola', upload.single('file'), async (req, res) => {
     const base64 = req.file.buffer.toString('base64');
     const mime   = req.file.mimetype;
 
-    const fileBlock = mime === 'application/pdf'
-      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
-      : { type: 'image',    source: { type: 'base64', media_type: mime,               data: base64 } };
-
     const prompt = `Analizá este documento financiero y extraé todas las posiciones de inversión que encuentres.
 
 Instrumentos disponibles en el sistema (intentá hacer coincidir por nombre o ticker):
 ${JSON.stringify(instruments.map(i => ({ id: i.id, name: i.alias || i.name, ticker: i.ticker })))}
 
-Para cada posición devolvé un objeto con estos campos (omitir los que no apliquen, no poner null explícito):
+Para cada posición devolvé un objeto con estos campos (omitir los que no correspondan):
 - instrument_name: nombre tal como aparece en el documento
 - instrument_id: id del instrumento del sistema si encontrás coincidencia clara
 - units: número de cuotas o unidades (si la posición es en unidades)
-- amount_clp: monto en pesos chilenos como número entero (si la posición es en CLP)
-- amount_usd: monto en dólares como número (si la posición es en USD)
-- notes: observación útil (ej: "Fondo Serie A", fecha de valorización, etc.)
+- amount_clp: monto en pesos chilenos como número entero (si es en CLP)
+- amount_usd: monto en dólares como número (si es en USD)
+- notes: observación útil (ej: "Fondo Serie A", fecha de valorización)
 
 Respondé ÚNICAMENTE con un array JSON válido, sin texto adicional, sin bloques markdown.`;
 
-    const response = await client.messages.create({
-      model: 'claude-opus-4-5',
-      max_tokens: 2048,
-      messages: [{ role: 'user', content: [fileBlock, { type: 'text', text: prompt }] }],
-    });
+    const result = await model.generateContent([
+      { inlineData: { mimeType: mime, data: base64 } },
+      { text: prompt },
+    ]);
 
-    const text = response.content.find(b => b.type === 'text')?.text?.trim() || '[]';
+    const text = result.response.text().trim();
+    // Gemini a veces envuelve en ```json ... ```, limpiar por las dudas
+    const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+
     let proposals = [];
-    try { proposals = JSON.parse(text); } catch { proposals = []; }
+    try { proposals = JSON.parse(clean); } catch { proposals = []; }
 
     res.json({ proposals });
   } catch (e) {
@@ -71,17 +82,17 @@ Respondé ÚNICAMENTE con un array JSON válido, sin texto adicional, sin bloque
   }
 });
 
-// ─── Chat tools ───────────────────────────────────────────────────────────────
-const TOOLS = [
+// ─── Definición de herramientas para el chat ──────────────────────────────────
+const FUNCTION_DECLARATIONS = [
   {
     name: 'get_portfolio',
     description: 'Obtiene las posiciones actuales del portafolio con valores y porcentajes al día',
-    input_schema: { type: 'object', properties: {} },
+    parameters: { type: 'object', properties: {} },
   },
   {
     name: 'get_movements',
     description: 'Obtiene el historial de aportes y retiros',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         from: { type: 'string', description: 'Fecha inicio YYYY-MM-DD (opcional)' },
@@ -92,13 +103,13 @@ const TOOLS = [
   {
     name: 'create_movement',
     description: 'Propone registrar un aporte o retiro a nivel de portafolio',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
-        date:       { type: 'string',  description: 'Fecha YYYY-MM-DD'            },
-        type:       { type: 'string',  enum: ['aporte', 'retiro']                 },
-        amount_clp: { type: 'number',  description: 'Monto en pesos chilenos'     },
-        notes:      { type: 'string',  description: 'Descripción del movimiento'  },
+        date:       { type: 'string',  description: 'Fecha YYYY-MM-DD'           },
+        type:       { type: 'string',  description: "'aporte' o 'retiro'"        },
+        amount_clp: { type: 'number',  description: 'Monto en pesos chilenos'    },
+        notes:      { type: 'string',  description: 'Descripción del movimiento' },
       },
       required: ['date', 'type', 'amount_clp'],
     },
@@ -106,15 +117,15 @@ const TOOLS = [
   {
     name: 'add_to_position',
     description: 'Propone agregar o retirar de una posición existente y registrar el movimiento',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         instrument_name: { type: 'string', description: 'Nombre del instrumento tal como aparece en el portafolio' },
-        type:         { type: 'string', enum: ['aporte', 'retiro']                         },
-        delta:        { type: 'number', description: 'Cantidad a agregar/quitar (positivo)' },
-        mode:         { type: 'string', enum: ['units', 'amount_clp', 'amount_usd'], description: 'Unidad del delta' },
+        type:         { type: 'string', description: "'aporte' o 'retiro'"                              },
+        delta:        { type: 'number', description: 'Cantidad a agregar/quitar (siempre positivo)'      },
+        mode:         { type: 'string', description: "'units', 'amount_clp' o 'amount_usd'"             },
         movement_clp: { type: 'number', description: 'Monto CLP para historial (si mode != amount_clp)' },
-        date:         { type: 'string', description: 'Fecha YYYY-MM-DD'                    },
+        date:         { type: 'string', description: 'Fecha YYYY-MM-DD'                                  },
         notes:        { type: 'string' },
       },
       required: ['instrument_name', 'type', 'delta', 'mode', 'date'],
@@ -124,14 +135,12 @@ const TOOLS = [
 
 const WRITE_TOOLS = new Set(['create_movement', 'add_to_position']);
 
-async function executeReadTool(name, input, userId) {
-  if (name === 'get_portfolio') {
-    return await computePositions(userId);
-  }
+async function executeReadTool(name, args, userId) {
+  if (name === 'get_portfolio') return await computePositions(userId);
   if (name === 'get_movements') {
     const clauses = ['user_id = $1']; const params = [userId];
-    if (input.from) { params.push(input.from); clauses.push(`date >= $${params.length}`); }
-    if (input.to)   { params.push(input.to);   clauses.push(`date <= $${params.length}`); }
+    if (args.from) { params.push(args.from); clauses.push(`date >= $${params.length}`); }
+    if (args.to)   { params.push(args.to);   clauses.push(`date <= $${params.length}`); }
     const { rows } = await query(
       `SELECT m.*, i.name AS instrument_name FROM movements m
        LEFT JOIN instruments i ON i.id = m.instrument_id
@@ -143,10 +152,8 @@ async function executeReadTool(name, input, userId) {
   return null;
 }
 
-async function resolveWriteTool(name, input, userId) {
-  if (name === 'create_movement') {
-    return { endpoint: 'create_movement', params: input };
-  }
+async function resolveWriteTool(name, args, userId) {
+  if (name === 'create_movement') return { endpoint: 'create_movement', params: args };
   if (name === 'add_to_position') {
     const { rows } = await query(
       `SELECT p.id, p.units, p.amount_clp, p.amount_usd, i.name, i.alias, i.ticker
@@ -154,9 +161,9 @@ async function resolveWriteTool(name, input, userId) {
        WHERE p.user_id = $1
          AND (LOWER(i.name) LIKE $2 OR LOWER(COALESCE(i.alias,'')) LIKE $2 OR LOWER(COALESCE(i.ticker,'')) LIKE $2)
        LIMIT 1`,
-      [userId, `%${input.instrument_name.toLowerCase()}%`]
+      [userId, `%${args.instrument_name.toLowerCase()}%`]
     );
-    return { endpoint: 'add_to_position', position: rows[0] || null, params: input };
+    return { endpoint: 'add_to_position', position: rows[0] || null, params: args };
   }
 }
 
@@ -168,66 +175,70 @@ router.post('/chat', async (req, res) => {
   }
 
   try {
-    const client = getClient();
-    const today  = new Date().toISOString().slice(0, 10);
+    const genAI = getClient();
+    const today = new Date().toISOString().slice(0, 10);
 
-    // Contexto del portafolio inyectado en el system prompt
+    // Contexto del portafolio
     let portfolioCtx = '';
     try {
       const data = await computePositions(req.user.id);
       const resumen = data.positions.map(p => ({
-        nombre: p.alias || p.name,
-        tipo: p.type,
+        nombre:    p.alias || p.name,
+        tipo:      p.type,
         valor_clp: Math.round(p.value_clp || 0),
-        pct: `${(p.pct_portfolio || 0).toFixed(1)}%`,
-        ...(p.units      != null ? { unidades: p.units }           : {}),
-        ...(p.amount_clp != null ? { monto_clp: p.amount_clp }     : {}),
-        ...(p.amount_usd != null ? { monto_usd: p.amount_usd }     : {}),
+        pct:       `${(p.pct_portfolio || 0).toFixed(1)}%`,
+        ...(p.units      != null ? { unidades:  p.units }       : {}),
+        ...(p.amount_clp != null ? { monto_clp: p.amount_clp }  : {}),
+        ...(p.amount_usd != null ? { monto_usd: p.amount_usd }  : {}),
       }));
       portfolioCtx = `\nPortafolio actual (${today}):\nTotal CLP: $${Math.round(data.totalClp || 0).toLocaleString('es-CL')}\nPosiciones:\n${JSON.stringify(resumen, null, 2)}`;
     } catch { portfolioCtx = '\n(No se pudo cargar el portafolio)'; }
 
-    const systemPrompt = `Sos un asistente financiero personal para una app de seguimiento de inversiones en Chile.
+    const systemInstruction = `Sos un asistente financiero personal para una app de seguimiento de inversiones en Chile.
 Respondés siempre en español. Sos directo, conciso y útil. La fecha de hoy es ${today}.
 ${portfolioCtx}
 
 Podés responder preguntas sobre el portafolio, hacer análisis y recomendaciones, y proponer registrar movimientos usando las herramientas disponibles. El usuario siempre confirma antes de que se ejecute cualquier acción de escritura.`;
 
-    let msgs = messages.map(m => ({ role: m.role, content: m.content }));
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction,
+      tools: [{ functionDeclarations: FUNCTION_DECLARATIONS }],
+    });
 
-    // Loop agéntico: ejecutar read-tools automáticamente; parar en write-tool
+    // Historial en formato Gemini (excluye el último mensaje del usuario que se envía aparte)
+    let contents = toGeminiContents(messages);
+
+    // Loop agéntico: ejecutar read-tools automáticamente; detenerse en write-tool
     for (let iter = 0; iter < 6; iter++) {
-      const response = await client.messages.create({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 1024,
-        system: systemPrompt,
-        tools: TOOLS,
-        messages: msgs,
-      });
+      const result   = await model.generateContent({ contents });
+      const parts    = result.response.candidates?.[0]?.content?.parts || [];
+      const textPart = parts.find(p => p.text);
+      const funcCall = parts.find(p => p.functionCall);
 
-      if (response.stop_reason === 'end_turn') {
-        const text = response.content.find(b => b.type === 'text')?.text || '';
-        return res.json({ type: 'message', content: text });
+      // Respuesta de texto puro
+      if (!funcCall) {
+        return res.json({ type: 'message', content: textPart?.text || '' });
       }
 
-      if (response.stop_reason === 'tool_use') {
-        const toolUses   = response.content.filter(b => b.type === 'tool_use');
-        const writeTool  = toolUses.find(t => WRITE_TOOLS.has(t.name));
+      const { name, args } = funcCall.functionCall;
 
-        if (writeTool) {
-          const textBlock = response.content.find(b => b.type === 'text');
-          const action    = await resolveWriteTool(writeTool.name, writeTool.input, req.user.id);
-          return res.json({ type: 'proposal', action, message: textBlock?.text || '' });
-        }
-
-        // Read tools: ejecutar y continuar conversación
-        const toolResults = [];
-        for (const tu of toolUses) {
-          const result = await executeReadTool(tu.name, tu.input, req.user.id);
-          toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) });
-        }
-        msgs = [...msgs, { role: 'assistant', content: response.content }, { role: 'user', content: toolResults }];
+      // Write tool → devolver propuesta al frontend
+      if (WRITE_TOOLS.has(name)) {
+        const action = await resolveWriteTool(name, args, req.user.id);
+        return res.json({ type: 'proposal', action, message: textPart?.text || '' });
       }
+
+      // Read tool → ejecutar y continuar conversación
+      const toolResult = await executeReadTool(name, args, req.user.id);
+
+      contents = [
+        ...contents,
+        { role: 'model', parts },                                    // respuesta del modelo con la llamada
+        { role: 'user',  parts: [{                                   // resultado de la herramienta
+            functionResponse: { name, response: { result: JSON.stringify(toolResult) } },
+        }]},
+      ];
     }
 
     res.json({ type: 'message', content: 'No pude procesar la consulta. Intentá de nuevo.' });
