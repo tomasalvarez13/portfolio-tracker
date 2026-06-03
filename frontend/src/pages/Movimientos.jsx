@@ -131,10 +131,6 @@ export default function Movimientos() {
     <div className="space-y-4 lg:space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-lg lg:text-xl font-semibold">Movimientos</h2>
-        <button onClick={() => setEditing({})}
-          className="px-3 py-2 rounded-lg text-xs lg:text-sm bg-accent hover:bg-accent/90 text-white">
-          + Nuevo
-        </button>
       </div>
 
       {error && <ErrorBox message={error} />}

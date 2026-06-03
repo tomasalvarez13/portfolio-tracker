@@ -5,7 +5,8 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 
 // Si se pasa `preSelected`, el instrumento está fijo.
 // Si se pasa `positions` (lista), el usuario elige desde un dropdown.
-export default function AporteForm({ positions, preSelected, onSubmit, onCancel }) {
+// `type` puede ser 'aporte' (default) o 'retiro'.
+export default function AporteForm({ positions, preSelected, onSubmit, onCancel, type = 'aporte' }) {
   const [selectedId, setSelectedId] = useState(preSelected?.id ?? '');
   const [delta, setDelta]           = useState('');
   const [movClp, setMovClp]         = useState('');
@@ -29,6 +30,7 @@ export default function AporteForm({ positions, preSelected, onSubmit, onCancel 
     e.preventDefault();
     const num = Number(delta);
     onSubmit(position.id, {
+      type,
       date,
       notes: notes || null,
       delta_units:      mode === 'units'      ? num : null,
@@ -49,9 +51,11 @@ export default function AporteForm({ positions, preSelected, onSubmit, onCancel 
     : mode === 'amount_usd' ? 'Monto a agregar (USD)'
     : '';
 
+  const isRetiro = type === 'retiro';
+
   return (
     <form onSubmit={submit} className="card p-5 space-y-4">
-      <h3 className="font-medium">Aporte a posición existente</h3>
+      <h3 className="font-medium">{isRetiro ? 'Retiro de posición existente' : 'Aporte a posición existente'}</h3>
 
       {/* Selector de instrumento (solo cuando no viene pre-seleccionado) */}
       {!preSelected && (
@@ -97,7 +101,7 @@ export default function AporteForm({ positions, preSelected, onSubmit, onCancel 
 
           {mode !== 'amount_clp' && (
             <div>
-              <label className="text-xs text-muted">Monto CLP del aporte (para historial)</label>
+              <label className="text-xs text-muted">Monto CLP del {isRetiro ? 'retiro' : 'aporte'} (para historial)</label>
               <input type="number" step="any" value={movClp} onChange={(e) => setMovClp(e.target.value)}
                 placeholder="Opcional — podés registrarlo después en Movimientos"
                 className="mt-1 w-full bg-bg-base border border-bg-border rounded-lg px-3 py-2 text-sm num placeholder:text-muted/50" />
@@ -117,8 +121,12 @@ export default function AporteForm({ positions, preSelected, onSubmit, onCancel 
           className="px-4 py-2 rounded-lg text-sm text-muted hover:bg-bg-hover">Cancelar</button>
         {position && (
           <button type="submit"
-            className="px-4 py-2 rounded-lg text-sm bg-gain/15 text-gain hover:bg-gain/25 font-medium">
-            + Agregar aporte
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${
+              isRetiro
+                ? 'bg-loss/15 text-loss hover:bg-loss/25'
+                : 'bg-gain/15 text-gain hover:bg-gain/25'
+            }`}>
+            {isRetiro ? '− Registrar retiro' : '+ Agregar aporte'}
           </button>
         )}
       </div>

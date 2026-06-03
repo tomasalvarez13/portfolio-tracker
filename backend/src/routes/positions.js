@@ -45,9 +45,13 @@ router.put('/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-// POST /api/positions/:id/aporte — suma un delta a la posición y registra el movimiento.
+// POST /api/positions/:id/aporte — suma (aporte) o resta (retiro) un delta y registra el movimiento.
 router.post('/:id/aporte', async (req, res) => {
-  const { delta_units, delta_amount_clp, delta_amount_usd, movement_clp, date, notes } = req.body;
+  const { delta_units, delta_amount_clp, delta_amount_usd, movement_clp, date, notes, type = 'aporte' } = req.body;
+  if (!['aporte', 'retiro'].includes(type)) {
+    return res.status(400).json({ error: "type debe ser 'aporte' o 'retiro'" });
+  }
+  const sign = type === 'retiro' ? -1 : 1;
 
   const { rows: [pos] } = await query(
     'SELECT * FROM positions WHERE id=$1 AND user_id=$2',
@@ -59,9 +63,9 @@ router.post('/:id/aporte', async (req, res) => {
     return res.status(400).json({ error: 'Indica delta_units, delta_amount_clp o delta_amount_usd' });
   }
 
-  const newUnits      = delta_units      != null ? Number(pos.units      || 0) + Number(delta_units)      : pos.units;
-  const newAmountClp  = delta_amount_clp != null ? Number(pos.amount_clp || 0) + Number(delta_amount_clp) : pos.amount_clp;
-  const newAmountUsd  = delta_amount_usd != null ? Number(pos.amount_usd || 0) + Number(delta_amount_usd) : pos.amount_usd;
+  const newUnits      = delta_units      != null ? Number(pos.units      || 0) + sign * Number(delta_units)      : pos.units;
+  const newAmountClp  = delta_amount_clp != null ? Number(pos.amount_clp || 0) + sign * Number(delta_amount_clp) : pos.amount_clp;
+  const newAmountUsd  = delta_amount_usd != null ? Number(pos.amount_usd || 0) + sign * Number(delta_amount_usd) : pos.amount_usd;
 
   const { rows: [updatedPos] } = await query(
     `UPDATE positions SET units=$3, amount_clp=$4, amount_usd=$5, updated_at=NOW()
@@ -76,8 +80,8 @@ router.post('/:id/aporte', async (req, res) => {
   if (clpForMovement != null) {
     const { rows: [mov] } = await query(
       `INSERT INTO movements (user_id, instrument_id, date, type, amount_clp, notes)
-       VALUES ($1, NULL, $2, 'aporte', $3, $4) RETURNING *`,
-      [req.user.id, movDate, clpForMovement, notes ?? null]
+       VALUES ($1, NULL, $2, $3, $4, $5) RETURNING *`,
+      [req.user.id, movDate, type, clpForMovement, notes ?? null]
     );
     movement = mov;
   }

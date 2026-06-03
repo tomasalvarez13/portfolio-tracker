@@ -20,7 +20,7 @@ export default function Posiciones() {
   const posHook  = usePersistedFetch(`positions_${user?.id}`, getPositions);
   const instHook = usePersistedFetch(`instruments_${user?.id}`, getInstruments);
 
-  // mode: null | 'choose' | 'new' | 'aporte'
+  // mode: null | 'choose' | 'new' | 'aporte' | 'retiro'
   const [mode, setMode]               = useState(null);
   const [editing, setEditing]         = useState(null); // posición existente a editar
   const [pricing, setPricing]         = useState(null);
@@ -128,16 +128,21 @@ export default function Posiciones() {
       {mode === 'choose' && (
         <div className="card p-5 space-y-4">
           <h3 className="font-medium">¿Qué querés registrar?</h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <button onClick={() => setMode('new')}
               className="p-4 rounded-lg border border-bg-border hover:border-accent/60 hover:bg-accent/5 text-left transition-colors">
               <div className="font-medium text-sm">Nueva posición</div>
-              <div className="text-xs text-muted mt-1">Instrumento que aún no tenés en el portafolio</div>
+              <div className="text-xs text-muted mt-1">Instrumento que aún no tenés</div>
             </button>
             <button onClick={() => setMode('aporte')}
               className="p-4 rounded-lg border border-bg-border hover:border-gain/60 hover:bg-gain/5 text-left transition-colors">
-              <div className="font-medium text-sm text-gain">Aporte a existente</div>
-              <div className="text-xs text-muted mt-1">Agregar plata a un instrumento que ya tenés</div>
+              <div className="font-medium text-sm text-gain">Aporte</div>
+              <div className="text-xs text-muted mt-1">Agregar plata a un instrumento existente</div>
+            </button>
+            <button onClick={() => setMode('retiro')}
+              className="p-4 rounded-lg border border-bg-border hover:border-loss/60 hover:bg-loss/5 text-left transition-colors">
+              <div className="font-medium text-sm text-loss">Retiro</div>
+              <div className="text-xs text-muted mt-1">Retirar plata de un instrumento existente</div>
             </button>
           </div>
           <div className="flex justify-end">
@@ -151,9 +156,10 @@ export default function Posiciones() {
           onSubmit={handleSave} onCancel={() => setMode(null)} />
       )}
 
-      {mode === 'aporte' && (
+      {(mode === 'aporte' || mode === 'retiro') && (
         <AporteForm
           positions={positions}
+          type={mode}
           onSubmit={(positionId, body) => handleAporte(positionId, body)}
           onCancel={() => setMode(null)}
         />
