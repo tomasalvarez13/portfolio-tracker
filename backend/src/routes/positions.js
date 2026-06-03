@@ -27,6 +27,9 @@ router.post('/', async (req, res) => {
        RETURNING *`,
       [req.user.id, instrument_id, units ?? null, amount_clp ?? null, amount_usd ?? null, notes ?? null]
     );
+    // Actualizar snapshot del día para que el gráfico refleje el cambio inmediatamente
+    const today = new Date().toISOString().slice(0, 10);
+    try { await computeAndSaveSnapshot(req.user.id, today); } catch {}
     res.status(201).json(rows[0]);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -42,6 +45,8 @@ router.put('/:id', async (req, res) => {
     [req.params.id, req.user.id, units ?? null, amount_clp ?? null, amount_usd ?? null, notes ?? null]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Posición no encontrada' });
+  const today = new Date().toISOString().slice(0, 10);
+  try { await computeAndSaveSnapshot(req.user.id, today); } catch {}
   res.json(rows[0]);
 });
 

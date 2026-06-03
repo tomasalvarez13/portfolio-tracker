@@ -124,11 +124,19 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
     }
   }, [selectedRange, filteredSnaps, onRangeChange]);
 
-  const data = filteredSnaps.map(s => ({
+  const rawData = filteredSnaps.map(s => ({
     date: s.date,
     value: currency === 'CLP' ? s.total_clp : s.total_usd,
     raw: s,
   }));
+
+  // Con un solo punto Recharts no dibuja nada — añadimos un punto virtual
+  // "ayer" al mismo valor para mostrar una línea plana significativa.
+  const data = rawData.length === 1 ? [
+    { date: (() => { const d = new Date(rawData[0].date); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })(),
+      value: rawData[0].value, raw: rawData[0].raw, _virtual: true },
+    rawData[0],
+  ] : rawData;
 
   const fmtFn  = currency === 'CLP' ? formatCLP : formatUSD;
   const maxVal = data.length ? Math.max(...data.map(d => d.value)) : 1;
@@ -232,7 +240,23 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
       )}
 
       {data.length === 0 ? (
-        <div className="text-muted text-sm py-16 text-center">Sin datos en este rango.</div>
+        <div className="py-16 text-center space-y-2">
+          <p className="text-sm text-muted">Sin datos en este rango.</p>
+          <p className="text-xs text-muted/60">Probá seleccionar "Todo" o un rango más amplio.</p>
+        </div>
+      ) : rawData.length === 1 ? (
+        // Un solo punto: mostrar valor actual + mensaje explicativo encima del gráfico
+        <div>
+          <div className="mb-4 px-1 flex items-center gap-3">
+            <div>
+              <p className="text-xs text-muted">Valor actual</p>
+              <p className="text-xl font-semibold num">{fmtFn(rawData[0].value)}</p>
+            </div>
+            <p className="text-xs text-muted/70 max-w-xs">
+              Empezaste a registrar hoy — el gráfico irá mostrando la evolución a medida que pasen los días.
+            </p>
+          </div>
+        </div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <AreaChart
