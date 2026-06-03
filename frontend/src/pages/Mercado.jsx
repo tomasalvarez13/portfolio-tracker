@@ -1,25 +1,15 @@
-import { useEffect, useState } from 'react';
 import { getMarket } from '../services/api';
 import { formatCLP, formatUSD, formatPct, formatDate, colorForValue } from '../utils/formatters';
 import { TypeBadge, StaleBadge } from '../components/ui/Badge.jsx';
 import { StatCard } from '../components/ui/Card.jsx';
 import { Spinner, ErrorBox } from '../components/ui/Spinner.jsx';
+import { usePersistedFetch } from '../hooks/usePersistedFetch.js';
 
 export default function Mercado() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    (async () => {
-      try { setData(await getMarket()); }
-      catch (e) { setError(e.response?.data?.error || e.message); }
-      finally { setLoading(false); }
-    })();
-  }, []);
+  const { data, loading, syncing, error } = usePersistedFetch('mercado_v1', getMarket);
 
   if (loading) return <Spinner />;
-  if (error) return <ErrorBox message={error} />;
+  if (error && !data) return <ErrorBox message={error.response?.data?.error || error.message} />;
 
   const btc = data?.instruments?.find((i) => i.type === 'crypto');
   const stocks = data?.instruments?.filter((i) => i.type !== 'crypto') || [];
@@ -27,6 +17,12 @@ export default function Mercado() {
   return (
     <div className="space-y-4 lg:space-y-6">
       <h2 className="text-lg lg:text-xl font-semibold">Mercado</h2>
+      {syncing && (
+        <div className="flex items-center gap-2 text-xs text-muted px-3 py-2 bg-bg-card border border-bg-border rounded-lg w-fit">
+          <span className="inline-block w-3 h-3 rounded-full border-2 border-muted border-t-transparent animate-spin" />
+          Actualizando datos…
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
         <StatCard label="Dólar observado"

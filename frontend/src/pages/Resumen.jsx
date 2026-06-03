@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { getSummary, getSnapshots, getBreakdown, getMovements } from '../services/api';
 import { formatCLP, formatUSD, formatDate } from '../utils/formatters';
 import { StatCard } from '../components/ui/Card.jsx';
@@ -6,43 +6,50 @@ import { Spinner, ErrorBox } from '../components/ui/Spinner.jsx';
 import EvolutionChart from '../components/summary/EvolutionChart.jsx';
 import EvolutionPeriodCard from '../components/summary/EvolutionPeriodCard.jsx';
 import BreakdownChart from '../components/summary/BreakdownChart.jsx';
+import { useAuth } from '../hooks/useAuth.jsx';
+import { usePersistedFetch } from '../hooks/usePersistedFetch.js';
+
+const fetchResumen = async () => {
+  const [s, snap, bd, mov] = await Promise.all([
+    getSummary(), getSnapshots(), getBreakdown(),
+    getMovements({ type: 'aporte' }),
+  ]);
+  return {
+    summary:   s,
+    snapshots: snap,
+    breakdown: bd,
+    aportes:   mov.filter(m => !m.instrument_id)
+                  .map(m => ({ date: m.date?.slice(0, 10), amount: Number(m.amount_clp) })),
+  };
+};
 
 export default function Resumen() {
-  const [summary,   setSummary]   = useState(null);
-  const [snapshots, setSnapshots] = useState([]);
-  const [breakdown, setBreakdown] = useState([]);
-  const [aportes,   setAportes]   = useState([]);
-  const [loading,   setLoading]   = useState(true);
-  const [error,     setError]     = useState(null);
-  const [currency,  setCurrency]  = useState('CLP');
+  const { user } = useAuth();
+  const { data, loading, syncing, error } =
+    usePersistedFetch(user?.id ? `resumen_${user.id}` : null, fetchResumen);
+
+  const [currency,    setCurrency]    = useState('CLP');
   const [selectedDay, setSelectedDay] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const [s, snap, bd, mov] = await Promise.all([
-          getSummary(), getSnapshots(), getBreakdown(),
-          getMovements({ type: 'aporte' }),
-        ]);
-        setSummary(s); setSnapshots(snap); setBreakdown(bd);
-        setAportes(
-          mov.filter(m => !m.instrument_id)
-             .map(m => ({ date: m.date?.slice(0, 10), amount: Number(m.amount_clp) }))
-        );
-      } catch (e) {
-        setError(e.response?.data?.error || e.message);
-      } finally { setLoading(false); }
-    })();
-  }, []);
+  const summary   = data?.summary   ?? null;
+  const snapshots = data?.snapshots ?? [];
+  const breakdown = data?.breakdown ?? [];
+  const aportes   = data?.aportes   ?? [];
 
   if (loading) return <Spinner />;
-  if (error)   return <ErrorBox message={error} />;
+  if (error && !data) return <ErrorBox message={error.response?.data?.error || error.message} />;
 
   return (
     <div className="space-y-4 lg:space-y-6">
       {/* Cabecera */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-lg lg:text-xl font-semibold">Resumen</h2>
+        {syncing && (
+          <div className="flex items-center gap-2 text-xs text-muted px-3 py-2 bg-bg-card border border-bg-border rounded-lg">
+            <span className="inline-block w-3 h-3 rounded-full border-2 border-muted border-t-transparent animate-spin" />
+            Actualizando…
+          </div>
+        )}
         <div className="flex gap-1 text-xs bg-bg-card border border-bg-border rounded-lg p-1">
           {['CLP', 'USD'].map(c => (
             <button key={c} onClick={() => setCurrency(c)}

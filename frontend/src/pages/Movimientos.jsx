@@ -1,9 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { getMovements, createMovement, updateMovement, deleteMovement } from '../services/api';
 import { formatCLP, formatDate, colorForValue } from '../utils/formatters';
 import { StatCard } from '../components/ui/Card.jsx';
 import { Spinner, ErrorBox } from '../components/ui/Spinner.jsx';
 import { ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth.jsx';
+import { usePersistedFetch } from '../hooks/usePersistedFetch.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -69,41 +71,37 @@ function MovementForm({ initial, onSubmit, onCancel }) {
   );
 }
 
+const fetchMovs = () => getMovements().then(data => data.filter(m => !m.instrument_id));
+
 export default function Movimientos() {
-  const [movs, setMovs]           = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState(null);
+  const { user } = useAuth();
+  const { data, loading, syncing, error: loadError, reload } =
+    usePersistedFetch(user?.id ? `movimientos_${user.id}` : null, fetchMovs);
+
+  const movs = data || [];
+  const [mutError, setMutError]     = useState(null);
   const [editing, setEditing]       = useState(null);
-  const [confirmDelete, setConfirmDelete] = useState(null); // id del movimiento a confirmar
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [filterType, setFilterType] = useState('all');
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
-    try {
-      const data = await getMovements();
-      // Solo nivel portafolio (sin instrument_id)
-      setMovs(data.filter(m => !m.instrument_id));
-    } catch (e) {
-      setError(e.response?.data?.error || e.message);
-    } finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
   async function handleSave(body) {
+    setMutError(null);
     try {
       if (editing?.id) await updateMovement(editing.id, body);
       else await createMovement(body);
       setEditing(null);
-      await load();
-    } catch (e) { setError(e.response?.data?.error || e.message); }
+      await reload();
+    } catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
   async function handleDelete(id) {
-    try { await deleteMovement(id); setConfirmDelete(null); await load(); }
-    catch (e) { setError(e.response?.data?.error || e.message); }
+    setMutError(null);
+    try { await deleteMovement(id); setConfirmDelete(null); await reload(); }
+    catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
 
   if (loading) return <Spinner />;
+
+  const displayError = mutError || loadError?.response?.data?.error || loadError?.message || null;
 
   const filtered = filterType === 'all' ? movs : movs.filter(m => m.type === filterType);
   const totalAportes = movs.filter(m => m.type === 'aporte').reduce((s, m) => s + Number(m.amount_clp || 0), 0);
@@ -133,7 +131,14 @@ export default function Movimientos() {
         <h2 className="text-lg lg:text-xl font-semibold">Movimientos</h2>
       </div>
 
-      {error && <ErrorBox message={error} />}
+      {syncing && (
+        <div className="flex items-center gap-2 text-xs text-muted px-3 py-2 bg-bg-card border border-bg-border rounded-lg w-fit">
+          <span className="inline-block w-3 h-3 rounded-full border-2 border-muted border-t-transparent animate-spin" />
+          Actualizando datos…
+        </div>
+      )}
+
+      {displayError && <ErrorBox message={displayError} />}
       {editing && (
         <MovementForm initial={editing.id ? editing : null} onSubmit={handleSave} onCancel={() => setEditing(null)} />
       )}

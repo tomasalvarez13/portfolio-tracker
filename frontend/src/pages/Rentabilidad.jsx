@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   getRentabilidad, getMonthlyRentabilidad, getTWR,
   getSnapshots, getMovements,
@@ -7,36 +7,31 @@ import { formatCLP, formatPct, formatDate, colorForValue } from '../utils/format
 import { StatCard } from '../components/ui/Card.jsx';
 import { Spinner, ErrorBox } from '../components/ui/Spinner.jsx';
 import EvolutionChart from '../components/summary/EvolutionChart.jsx';
+import { useAuth } from '../hooks/useAuth.jsx';
+import { usePersistedFetch } from '../hooks/usePersistedFetch.js';
+
+const fetchInit = async () => {
+  const [snap, mov] = await Promise.all([getSnapshots(), getMovements({ type: 'aporte' })]);
+  return {
+    snapshots: snap,
+    aportes:   mov.filter(m => !m.instrument_id)
+                  .map(m => ({ date: m.date?.slice(0, 10), amount: Number(m.amount_clp) })),
+  };
+};
 
 export default function Rentabilidad() {
-  const [snapshots, setSnapshots] = useState([]);
-  const [aportes,   setAportes]   = useState([]);
-  const [range,     setRange]     = useState(null); // { from, to, source }
-  const [rent,      setRent]      = useState(null);
-  const [twr,       setTwr]       = useState(null);
-  const [monthly,   setMonthly]   = useState([]);
-  const [loading,   setLoading]   = useState(true);
-  const [error,     setError]     = useState(null);
-  const [currency,  setCurrency]  = useState('CLP');
+  const { user }  = useAuth();
+  const { data: initData, loading, syncing } =
+    usePersistedFetch(user?.id ? `rentabilidad_init_${user.id}` : null, fetchInit);
 
-  // Carga inicial: snapshots + aportes para el gráfico
-  useEffect(() => {
-    (async () => {
-      try {
-        const [snap, mov] = await Promise.all([
-          getSnapshots(),
-          getMovements({ type: 'aporte' }),
-        ]);
-        setSnapshots(snap);
-        setAportes(
-          mov.filter(m => !m.instrument_id)
-             .map(m => ({ date: m.date?.slice(0, 10), amount: Number(m.amount_clp) }))
-        );
-      } catch (e) {
-        setError(e.response?.data?.error || e.message);
-      } finally { setLoading(false); }
-    })();
-  }, []);
+  const snapshots = initData?.snapshots ?? [];
+  const aportes   = initData?.aportes   ?? [];
+
+  const [range,    setRange]    = useState(null);
+  const [rent,     setRent]     = useState(null);
+  const [twr,      setTwr]      = useState(null);
+  const [monthly,  setMonthly]  = useState([]);
+  const [currency, setCurrency] = useState('CLP');
 
   // Cuando cambia el rango (selector o drag), refresca métricas.
   // Cada endpoint se llama por separado para que si TWR falla (ej: backend viejo
@@ -58,7 +53,6 @@ export default function Rentabilidad() {
   }, [range, refreshMetrics]);
 
   if (loading) return <Spinner />;
-  if (error)   return <ErrorBox message={error} />;
 
   const MES_LABELS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
   const fmtMonth = (ym) => {
@@ -70,6 +64,12 @@ export default function Rentabilidad() {
     <div className="space-y-4 lg:space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-lg lg:text-xl font-semibold">Rentabilidad</h2>
+        {syncing && (
+          <div className="flex items-center gap-2 text-xs text-muted px-3 py-2 bg-bg-card border border-bg-border rounded-lg">
+            <span className="inline-block w-3 h-3 rounded-full border-2 border-muted border-t-transparent animate-spin" />
+            Actualizando…
+          </div>
+        )}
         <div className="flex gap-1 text-xs bg-bg-card border border-bg-border rounded-lg p-1">
           {['CLP', 'USD'].map(c => (
             <button key={c} onClick={() => setCurrency(c)}
