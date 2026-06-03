@@ -25,6 +25,7 @@ export const getPositions = () => api.get('/positions').then((r) => r.data);
 export const createPosition = (body) => api.post('/positions', body).then((r) => r.data);
 export const updatePosition = (id, body) => api.put(`/positions/${id}`, body).then((r) => r.data);
 export const deletePosition = (id) => api.delete(`/positions/${id}`);
+export const addAporte = (id, body) => api.post(`/positions/${id}/aporte`, body).then((r) => r.data);
 
 // --- Movimientos ---
 export const getMovements = (params) => api.get('/movements', { params }).then((r) => r.data);

@@ -1,7 +1,7 @@
 // CRUD de posiciones del usuario autenticado, con valor actual calculado.
 import { Router } from 'express';
 import { query } from '../config/db.js';
-import { computePositions } from '../services/portfolioService.js';
+import { computePositions, computeAndSaveSnapshot } from '../services/portfolioService.js';
 
 const router = Router();
 
@@ -43,6 +43,47 @@ router.put('/:id', async (req, res) => {
   );
   if (!rows[0]) return res.status(404).json({ error: 'Posición no encontrada' });
   res.json(rows[0]);
+});
+
+// POST /api/positions/:id/aporte — suma un delta a la posición y registra el movimiento.
+router.post('/:id/aporte', async (req, res) => {
+  const { delta_units, delta_amount_clp, delta_amount_usd, movement_clp, date, notes } = req.body;
+
+  const { rows: [pos] } = await query(
+    'SELECT * FROM positions WHERE id=$1 AND user_id=$2',
+    [req.params.id, req.user.id]
+  );
+  if (!pos) return res.status(404).json({ error: 'Posición no encontrada' });
+
+  if (delta_units == null && delta_amount_clp == null && delta_amount_usd == null) {
+    return res.status(400).json({ error: 'Indica delta_units, delta_amount_clp o delta_amount_usd' });
+  }
+
+  const newUnits      = delta_units      != null ? Number(pos.units      || 0) + Number(delta_units)      : pos.units;
+  const newAmountClp  = delta_amount_clp != null ? Number(pos.amount_clp || 0) + Number(delta_amount_clp) : pos.amount_clp;
+  const newAmountUsd  = delta_amount_usd != null ? Number(pos.amount_usd || 0) + Number(delta_amount_usd) : pos.amount_usd;
+
+  const { rows: [updatedPos] } = await query(
+    `UPDATE positions SET units=$3, amount_clp=$4, amount_usd=$5, updated_at=NOW()
+     WHERE id=$1 AND user_id=$2 RETURNING *`,
+    [req.params.id, req.user.id, newUnits, newAmountClp, newAmountUsd]
+  );
+
+  // El monto CLP del movimiento: si el delta ya es CLP lo usamos directamente; si no, el frontend lo provee.
+  const clpForMovement = delta_amount_clp != null ? Number(delta_amount_clp) : (movement_clp != null ? Number(movement_clp) : null);
+  let movement = null;
+  if (clpForMovement != null) {
+    const movDate = date || new Date().toISOString().slice(0, 10);
+    const { rows: [mov] } = await query(
+      `INSERT INTO movements (user_id, instrument_id, date, type, amount_clp, notes)
+       VALUES ($1, NULL, $2, 'aporte', $3, $4) RETURNING *`,
+      [req.user.id, movDate, clpForMovement, notes ?? null]
+    );
+    movement = mov;
+    try { await computeAndSaveSnapshot(req.user.id, movDate); } catch {}
+  }
+
+  res.status(201).json({ position: updatedPos, movement });
 });
 
 // DELETE /api/positions/:id

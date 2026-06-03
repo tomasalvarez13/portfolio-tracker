@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import {
   getPositions, getInstruments, createPosition, updatePosition,
-  deletePosition, setManualPrice, refreshPrices,
+  deletePosition, setManualPrice, refreshPrices, addAporte,
 } from '../services/api';
 import {
   formatCLP, formatUSD, formatPct, formatUnits, formatDate,
@@ -11,60 +11,71 @@ import { StaleBadge } from '../components/ui/Badge.jsx';
 import { Spinner, ErrorBox } from '../components/ui/Spinner.jsx';
 import PositionForm from '../components/positions/PositionForm.jsx';
 import ManualPriceForm from '../components/positions/ManualPriceForm.jsx';
+import AporteForm from '../components/positions/AporteForm.jsx';
+import { useAuth } from '../hooks/useAuth.jsx';
+import { usePersistedFetch } from '../hooks/usePersistedFetch.js';
 
 export default function Posiciones() {
-  const [data, setData] = useState(null);
-  const [instruments, setInstruments] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [editing, setEditing] = useState(null);
-  const [pricing, setPricing] = useState(null);
+  const { user } = useAuth();
+  const posHook  = usePersistedFetch(`positions_${user?.id}`, getPositions);
+  const instHook = usePersistedFetch(`instruments_${user?.id}`, getInstruments);
+
+  const [editing, setEditing]     = useState(null);
+  const [pricing, setPricing]     = useState(null);
+  const [aportando, setAportando] = useState(null); // posición a la que agregar aporte
   const [refreshing, setRefreshing] = useState(false);
-  const [open, setOpen] = useState({}); // categorías expandidas
+  const [mutError, setMutError]   = useState(null);
+  const [open, setOpen]           = useState({});
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
-    try {
-      const [pos, inst] = await Promise.all([getPositions(), getInstruments()]);
-      setData(pos);
-      setInstruments(inst);
-    } catch (e) {
-      setError(e.response?.data?.error || e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  if (posHook.loading) return <Spinner />;
 
-  useEffect(() => { load(); }, [load]);
+  const data       = posHook.data;
+  const instruments = instHook.data || [];
+  const positions   = data?.positions || [];
+  const totalClp    = data?.totalClp || 0;
+
+  const displayError = mutError
+    || posHook.error?.response?.data?.error || posHook.error?.message
+    || null;
 
   async function handleSave(body) {
+    setMutError(null);
     try {
       if (editing?.id) await updatePosition(editing.id, body);
       else await createPosition(body);
       setEditing(null);
-      await load();
-    } catch (e) { setError(e.response?.data?.error || e.message); }
+      await posHook.reload();
+    } catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
+
   async function handleDelete(id) {
     if (!confirm('¿Eliminar esta posición?')) return;
-    try { await deletePosition(id); await load(); }
-    catch (e) { setError(e.response?.data?.error || e.message); }
+    setMutError(null);
+    try { await deletePosition(id); await posHook.reload(); }
+    catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
+
   async function handleManualPrice(body) {
-    try { await setManualPrice(body); setPricing(null); await load(); }
-    catch (e) { setError(e.response?.data?.error || e.message); }
+    setMutError(null);
+    try { await setManualPrice(body); setPricing(null); await posHook.reload(); }
+    catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
+
   async function handleRefresh() {
-    setRefreshing(true);
-    try { await refreshPrices(); await load(); }
-    catch (e) { setError(e.response?.data?.error || e.message); }
+    setRefreshing(true); setMutError(null);
+    try { await refreshPrices(); await posHook.reload(); }
+    catch (e) { setMutError(e.response?.data?.error || e.message); }
     finally { setRefreshing(false); }
   }
 
-  if (loading) return <Spinner />;
-
-  const positions = data?.positions || [];
-  const totalClp = data?.totalClp || 0;
+  async function handleAporte(body) {
+    setMutError(null);
+    try {
+      await addAporte(aportando.id, body);
+      setAportando(null);
+      await posHook.reload();
+    } catch (e) { setMutError(e.response?.data?.error || e.message); }
+  }
 
   // Agrupar por categoría de alto nivel
   const groups = {};
@@ -76,7 +87,6 @@ export default function Posiciones() {
     groups[cat].value_usd += p.value_usd || 0;
   }
   const visibleCats = CATEGORY_ORDER.filter((c) => groups[c]?.items.length);
-
   const toggle = (cat) => setOpen((o) => ({ ...o, [cat]: !o[cat] }));
 
   return (
@@ -98,7 +108,16 @@ export default function Posiciones() {
         </div>
       </div>
 
-      {error && <ErrorBox message={error} />}
+      {/* Banner de sincronización en background */}
+      {posHook.syncing && !refreshing && (
+        <div className="flex items-center gap-2 text-xs text-muted px-3 py-2 bg-bg-card border border-bg-border rounded-lg w-fit">
+          <span className="inline-block w-3 h-3 rounded-full border-2 border-muted border-t-transparent animate-spin" />
+          Actualizando datos…
+        </div>
+      )}
+
+      {displayError && <ErrorBox message={displayError} />}
+
       {editing && (
         <PositionForm instruments={instruments} initial={editing.id ? editing : null}
           onSubmit={handleSave} onCancel={() => setEditing(null)} />
@@ -106,10 +125,13 @@ export default function Posiciones() {
       {pricing && (
         <ManualPriceForm position={pricing} onSubmit={handleManualPrice} onCancel={() => setPricing(null)} />
       )}
+      {aportando && (
+        <AporteForm position={aportando} onSubmit={handleAporte} onCancel={() => setAportando(null)} />
+      )}
 
       {positions.length === 0 ? (
         <div className="card p-10 text-center text-muted">
-          No tienes posiciones. Crea la primera con “+ Nueva posición”.
+          No tienes posiciones. Crea la primera con "+ Nueva".
         </div>
       ) : (
         <div className="space-y-3">
@@ -119,7 +141,6 @@ export default function Posiciones() {
             const isOpen = !!open[cat];
             return (
               <div key={cat} className="card overflow-hidden">
-                {/* Fila resumen de la categoría */}
                 <button onClick={() => toggle(cat)}
                   className="w-full flex items-center gap-4 px-5 py-4 hover:bg-bg-hover/40 transition-colors text-left">
                   <span className={`text-muted transition-transform ${isOpen ? 'rotate-90' : ''}`}>▸</span>
@@ -134,60 +155,59 @@ export default function Posiciones() {
                   <div className="w-20 text-right num text-sm text-muted">{formatPct(pct, { sign: false })}</div>
                 </button>
 
-                {/* Detalle desplegable */}
                 {isOpen && (
                   <div className="overflow-x-auto">
-                  <table className="w-full text-sm border-t border-bg-border min-w-[640px]">
-                    <thead>
-                      <tr className="text-left text-xs text-muted border-b border-bg-border/60">
-                        <th className="px-5 py-2 font-medium">Instrumento</th>
-                        <th className="px-4 py-2 font-medium text-right">Unidades/Monto</th>
-                        <th className="px-4 py-2 font-medium text-right">Precio</th>
-                        <th className="px-4 py-2 font-medium text-right">Valor CLP</th>
-                        <th className="px-4 py-2 font-medium text-right">Valor USD</th>
-                        <th className="px-4 py-2 font-medium text-right">% Port.</th>
-                        <th className="px-4 py-2 font-medium text-right">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {g.items.map((p) => (
-                        <tr key={p.id} className="border-b border-bg-border/40 last:border-0 hover:bg-bg-hover/30">
-                          <td className="px-5 py-2.5">
-                            <div className="font-medium">{p.alias || p.name}</div>
-                            {p.ticker && <div className="text-xs text-muted">{p.ticker}</div>}
-                          </td>
-                          <td className="px-4 py-2.5 text-right num">
-                            {p.units != null ? formatUnits(p.units)
-                              : p.amount_clp != null ? formatCLP(p.amount_clp) : formatUSD(p.amount_usd)}
-                          </td>
-                          <td className="px-4 py-2.5 text-right num">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {p.is_stale && <StaleBadge />}
-                              {p.currency === 'USD' && p.price_usd != null ? formatUSD(p.price_usd)
-                                : p.price_clp != null ? formatCLP(p.price_clp) : '—'}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5 text-right num">{formatCLP(p.value_clp)}</td>
-                          <td className="px-4 py-2.5 text-right num text-muted">{formatUSD(p.value_usd)}</td>
-                          <td className="px-4 py-2.5 text-right num text-muted">{formatPct(p.pct_portfolio, { sign: false })}</td>
-                          <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                            {p.api_source === 'manual' && (
-                              <button onClick={() => setPricing(p)} className="text-xs text-accent hover:underline mr-2">precio</button>
-                            )}
-                            <button onClick={() => setEditing(p)} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
-                            <button onClick={() => handleDelete(p.id)} className="text-xs text-muted hover:text-loss">eliminar</button>
-                          </td>
+                    <table className="w-full text-sm border-t border-bg-border min-w-[640px]">
+                      <thead>
+                        <tr className="text-left text-xs text-muted border-b border-bg-border/60">
+                          <th className="px-5 py-2 font-medium">Instrumento</th>
+                          <th className="px-4 py-2 font-medium text-right">Unidades/Monto</th>
+                          <th className="px-4 py-2 font-medium text-right">Precio</th>
+                          <th className="px-4 py-2 font-medium text-right">Valor CLP</th>
+                          <th className="px-4 py-2 font-medium text-right">Valor USD</th>
+                          <th className="px-4 py-2 font-medium text-right">% Port.</th>
+                          <th className="px-4 py-2 font-medium text-right">Acciones</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {g.items.map((p) => (
+                          <tr key={p.id} className="border-b border-bg-border/40 last:border-0 hover:bg-bg-hover/30">
+                            <td className="px-5 py-2.5">
+                              <div className="font-medium">{p.alias || p.name}</div>
+                              {p.ticker && <div className="text-xs text-muted">{p.ticker}</div>}
+                            </td>
+                            <td className="px-4 py-2.5 text-right num">
+                              {p.units != null ? formatUnits(p.units)
+                                : p.amount_clp != null ? formatCLP(p.amount_clp) : formatUSD(p.amount_usd)}
+                            </td>
+                            <td className="px-4 py-2.5 text-right num">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {p.is_stale && <StaleBadge />}
+                                {p.currency === 'USD' && p.price_usd != null ? formatUSD(p.price_usd)
+                                  : p.price_clp != null ? formatCLP(p.price_clp) : '—'}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2.5 text-right num">{formatCLP(p.value_clp)}</td>
+                            <td className="px-4 py-2.5 text-right num text-muted">{formatUSD(p.value_usd)}</td>
+                            <td className="px-4 py-2.5 text-right num text-muted">{formatPct(p.pct_portfolio, { sign: false })}</td>
+                            <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                              {p.api_source === 'manual' && (
+                                <button onClick={() => setPricing(p)} className="text-xs text-accent hover:underline mr-2">precio</button>
+                              )}
+                              <button onClick={() => setAportando(p)} className="text-xs text-gain hover:underline mr-2">aporte</button>
+                              <button onClick={() => setEditing(p)} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
+                              <button onClick={() => handleDelete(p.id)} className="text-xs text-muted hover:text-loss">eliminar</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
             );
           })}
 
-          {/* Total general */}
           <div className="card px-5 py-4 flex items-center gap-4 font-medium">
             <span className="w-4" />
             <div className="flex-1">Total portafolio</div>
