@@ -12,6 +12,7 @@ import { Spinner, ErrorBox } from '../components/ui/Spinner.jsx';
 import PositionForm from '../components/positions/PositionForm.jsx';
 import ManualPriceForm from '../components/positions/ManualPriceForm.jsx';
 import AporteForm from '../components/positions/AporteForm.jsx';
+import CartolaUpload from '../components/positions/CartolaUpload.jsx';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { usePersistedFetch } from '../hooks/usePersistedFetch.js';
 
@@ -20,7 +21,7 @@ export default function Posiciones() {
   const posHook  = usePersistedFetch(`positions_${user?.id}`, getPositions);
   const instHook = usePersistedFetch(`instruments_${user?.id}`, getInstruments);
 
-  // mode: null | 'choose' | 'new' | 'aporte' | 'retiro'
+  // mode: null | 'choose' | 'new' | 'aporte' | 'retiro' | 'cartola'
   const [mode, setMode]               = useState(null);
   const [editing, setEditing]         = useState(null); // posición existente a editar
   const [pricing, setPricing]         = useState(null);
@@ -128,11 +129,18 @@ export default function Posiciones() {
       {mode === 'choose' && (
         <div className="card p-5 space-y-4">
           <h3 className="font-medium">¿Qué querés registrar?</h3>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <button onClick={() => setMode('new')}
               className="p-4 rounded-lg border border-bg-border hover:border-accent/60 hover:bg-accent/5 text-left transition-colors">
               <div className="font-medium text-sm">Nueva posición</div>
               <div className="text-xs text-muted mt-1">Instrumento que aún no tenés</div>
+            </button>
+            <button onClick={() => setMode('cartola')}
+              className="p-4 rounded-lg border border-bg-border hover:border-accent/60 hover:bg-accent/5 text-left transition-colors">
+              <div className="font-medium text-sm flex items-center gap-1.5">
+                Subir cartola <span className="text-[10px] bg-accent/20 text-accent px-1.5 py-0.5 rounded-full">IA</span>
+              </div>
+              <div className="text-xs text-muted mt-1">La IA extrae las posiciones del PDF o imagen</div>
             </button>
             <button onClick={() => setMode('aporte')}
               className="p-4 rounded-lg border border-bg-border hover:border-gain/60 hover:bg-gain/5 text-left transition-colors">
@@ -161,6 +169,14 @@ export default function Posiciones() {
           positions={positions}
           type={mode}
           onSubmit={(positionId, body) => handleAporte(positionId, body)}
+          onCancel={() => setMode(null)}
+        />
+      )}
+
+      {mode === 'cartola' && (
+        <CartolaUpload
+          instruments={instruments}
+          onDone={() => { setMode(null); posHook.reload(); }}
           onCancel={() => setMode(null)}
         />
       )}

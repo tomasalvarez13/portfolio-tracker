@@ -12,6 +12,7 @@ import pricesRouter from './routes/prices.js';
 import portfolioRouter from './routes/portfolio.js';
 import marketRouter from './routes/market.js';
 import adminRouter from './routes/admin.js';
+import aiRouter from './routes/ai.js';
 import { runDailyJob } from './jobs/dailyPriceFetch.js';
 
 dotenv.config();
@@ -36,6 +37,9 @@ app.use('/api/movements', requireAuth, movementsRouter);
 app.use('/api/prices', requireAuth, pricesRouter);
 app.use('/api/portfolio', requireAuth, portfolioRouter);
 app.use('/api/market', requireAuth, marketRouter);
+
+// Rutas de IA
+app.use('/api/ai', requireAuth, aiRouter);
 
 // Rutas admin (preparadas; la mayoría responde 501 en v1)
 app.use('/api/admin', requireAuth, requireAdmin, adminRouter);

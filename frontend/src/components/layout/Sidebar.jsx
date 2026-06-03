@@ -6,6 +6,7 @@ import {
   TrendingUp,
   LineChart,
   ArrowLeftRight,
+  MessageSquare,
   LogOut,
 } from 'lucide-react';
 
@@ -14,7 +15,8 @@ const NAV = [
   { to: '/posiciones',   label: 'Posiciones',   Icon: Layers          },
   { to: '/movimientos',  label: 'Movimientos',  Icon: ArrowLeftRight  },
   { to: '/rentabilidad', label: 'Rentabilidad', Icon: TrendingUp      },
-  { to: '/mercado',      label: 'Mercado',       Icon: LineChart       },
+  { to: '/mercado',      label: 'Mercado',      Icon: LineChart       },
+  { to: '/chat',         label: 'Chat IA',      Icon: MessageSquare   },
 ];
 
 export default function Sidebar() {

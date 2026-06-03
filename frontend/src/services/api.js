@@ -54,4 +54,10 @@ export const getTWR = (params) =>
 // --- Mercado ---
 export const getMarket = () => api.get('/market').then((r) => r.data);
 
+// --- IA ---
+export const parseCartola   = (formData) => api.post('/ai/parse-cartola', formData, {
+  headers: { 'Content-Type': 'multipart/form-data' },
+}).then((r) => r.data);
+export const sendChatMessage = (messages) => api.post('/ai/chat', { messages }).then((r) => r.data);
+
 export default api;
