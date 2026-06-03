@@ -277,6 +277,101 @@ export async function getRentabilidad(userId, from, to) {
   };
 }
 
+/**
+ * Time-Weighted Return (TWR) — método estándar de la industria.
+ * Divide el período en sub-períodos por cada movimiento (aporte/retiro),
+ * calcula el rendimiento de cada uno, y los multiplica geométricamente.
+ *
+ * Esto mide la rentabilidad real de la plata, independiente de cuándo se aportó.
+ * Es el método que usan Fintual, AFP y los fondos mutuos para reportar rentabilidad.
+ *
+ * Devuelve: { twr_pct, twr_clp_aprox, sub_periods, aportes_clp, retiros_clp }
+ */
+export async function computeTWR(userId, from, to) {
+  // 1. Snapshots del rango (ascendente)
+  const snapshots = await getSnapshots(userId, from, to);
+  if (snapshots.length < 2) {
+    return { twr_pct: null, error: 'No hay suficientes snapshots en el rango' };
+  }
+
+  // 2. Movimientos (aportes/retiros a nivel portafolio) en el rango
+  const { rows: movs } = await query(
+    `SELECT date, type, COALESCE(amount_clp, 0) AS amount_clp
+     FROM movements
+     WHERE user_id = $1 AND instrument_id IS NULL
+       AND date > $2 AND date <= $3
+     ORDER BY date ASC`,
+    [userId, from, to]
+  );
+
+  // 3. Construir sub-períodos por cada movimiento
+  // Para cada movimiento en fecha D:
+  //   - V_end = valor del snapshot en D-1 (último antes del aporte)
+  //   - sub-período: [V_start ... V_end]
+  //   - V_start del siguiente sub-período = V_end + signo*monto
+  //
+  // Si no hay snapshot exacto en D-1, se usa el snapshot más cercano <= D-1.
+  const snapByDate = new Map(snapshots.map((s) => [s.date, s.total_clp]));
+  const sortedDates = snapshots.map((s) => s.date);
+
+  function snapBefore(date) {
+    let best = null;
+    for (const d of sortedDates) {
+      if (d < date) best = d;
+      else break;
+    }
+    return best ? { date: best, value: snapByDate.get(best) } : null;
+  }
+
+  const subPeriods = [];
+  let cursorValue = snapshots[0].total_clp;
+  let cursorDate = snapshots[0].date;
+
+  for (const m of movs) {
+    const movDate = toISODate(m.date);
+    const before = snapBefore(movDate);
+    if (!before || before.date < cursorDate) continue;
+    const vEnd = Number(before.value);
+    const r = cursorValue > 0 ? (vEnd / cursorValue) - 1 : 0;
+    subPeriods.push({ from: cursorDate, to: before.date, r });
+    // Después del movimiento, el portafolio "vale" vEnd + signo*monto
+    const signo = m.type === 'aporte' ? 1 : -1;
+    cursorValue = vEnd + signo * Number(m.amount_clp);
+    cursorDate = movDate;
+  }
+
+  // Sub-período final hasta el último snapshot
+  const last = snapshots[snapshots.length - 1];
+  if (last.date > cursorDate) {
+    const r = cursorValue > 0 ? (last.total_clp / cursorValue) - 1 : 0;
+    subPeriods.push({ from: cursorDate, to: last.date, r });
+  }
+
+  // 4. TWR = producto de (1+r_i) - 1
+  let twr = 1;
+  for (const sp of subPeriods) twr *= (1 + sp.r);
+  twr -= 1;
+
+  const aportesClp = movs.filter((m) => m.type === 'aporte').reduce((s, m) => s + Number(m.amount_clp), 0);
+  const retirosClp = movs.filter((m) => m.type === 'retiro').reduce((s, m) => s + Number(m.amount_clp), 0);
+
+  // TWR_clp aproximado: aplicar el TWR al valor inicial
+  const twrClpAprox = snapshots[0].total_clp * twr;
+
+  return {
+    from: snapshots[0].date,
+    to: last.date,
+    twr_pct: twr * 100,
+    twr_clp_aprox: twrClpAprox,
+    valor_inicial_clp: snapshots[0].total_clp,
+    valor_final_clp: last.total_clp,
+    aportes_clp: aportesClp,
+    retiros_clp: retirosClp,
+    aportes_netos_clp: aportesClp - retirosClp,
+    n_sub_periodos: subPeriods.length,
+  };
+}
+
 /** Resumen mensual: por cada mes del rango, % y CLP real (descontando aportes). */
 export async function getMonthlyRentabilidad(userId, from, to) {
   const snaps = await getSnapshots(userId, from, to);

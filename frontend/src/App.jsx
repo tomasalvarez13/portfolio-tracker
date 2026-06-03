@@ -6,6 +6,7 @@ import Posiciones from './pages/Posiciones.jsx';
 import Resumen from './pages/Resumen.jsx';
 import Rentabilidad from './pages/Rentabilidad.jsx';
 import Mercado from './pages/Mercado.jsx';
+import Movimientos from './pages/Movimientos.jsx';
 
 function ProtectedRoute({ children }) {
   const { session, loading } = useAuth();
@@ -33,6 +34,7 @@ export default function App() {
         <Route index element={<Navigate to="/resumen" replace />} />
         <Route path="resumen" element={<Resumen />} />
         <Route path="posiciones" element={<Posiciones />} />
+        <Route path="movimientos" element={<Movimientos />} />
         <Route path="rentabilidad" element={<Rentabilidad />} />
         <Route path="mercado" element={<Mercado />} />
       </Route>

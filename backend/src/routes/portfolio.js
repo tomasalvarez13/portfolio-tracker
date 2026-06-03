@@ -3,6 +3,7 @@ import { Router } from 'express';
 import {
   getSummary, getSnapshots, computeBreakdown,
   getRentabilidad, getMonthlyRentabilidad, computeAndSaveSnapshot,
+  computeTWR,
 } from '../services/portfolioService.js';
 
 const router = Router();
@@ -40,6 +41,13 @@ router.get('/rentabilidad', async (req, res) => {
 router.get('/rentabilidad/monthly', async (req, res) => {
   const { from, to } = req.query;
   res.json(await getMonthlyRentabilidad(req.user.id, from, to));
+});
+
+// GET /api/portfolio/twr?from=&to=  -> rentabilidad TWR del rango
+router.get('/twr', async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from y to son obligatorios' });
+  res.json(await computeTWR(req.user.id, from, to));
 });
 
 export default router;

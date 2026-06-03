@@ -1,6 +1,7 @@
 // CRUD de movimientos (aportes/retiros) del usuario autenticado.
 import { Router } from 'express';
 import { query } from '../config/db.js';
+import { computeAndSaveSnapshot } from '../services/portfolioService.js';
 
 const router = Router();
 
@@ -24,11 +25,12 @@ router.get('/', async (req, res) => {
   res.json(rows);
 });
 
-// POST /api/movements  { instrument_id, date, type, amount_clp?, amount_usd?, notes? }
+// POST /api/movements  { instrument_id?, date, type, amount_clp?, amount_usd?, notes? }
+// instrument_id es opcional: si es null, es un movimiento a nivel portafolio (aporte general).
 router.post('/', async (req, res) => {
   const { instrument_id, date, type, amount_clp, amount_usd, notes } = req.body;
-  if (!instrument_id || !date || !type) {
-    return res.status(400).json({ error: 'instrument_id, date y type son obligatorios' });
+  if (!date || !type) {
+    return res.status(400).json({ error: 'date y type son obligatorios' });
   }
   if (!['aporte', 'retiro'].includes(type)) {
     return res.status(400).json({ error: "type debe ser 'aporte' o 'retiro'" });
@@ -36,8 +38,12 @@ router.post('/', async (req, res) => {
   const { rows } = await query(
     `INSERT INTO movements (user_id, instrument_id, date, type, amount_clp, amount_usd, notes)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [req.user.id, instrument_id, date, type, amount_clp ?? null, amount_usd ?? null, notes ?? null]
+    [req.user.id, instrument_id ?? null, date, type, amount_clp ?? null, amount_usd ?? null, notes ?? null]
   );
+
+  // Regenerar snapshot del día del movimiento para que el TWR sea preciso.
+  try { await computeAndSaveSnapshot(req.user.id, date); } catch { /* no bloquear si falla */ }
+
   res.status(201).json(rows[0]);
 });
 

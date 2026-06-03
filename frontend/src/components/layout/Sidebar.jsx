@@ -5,12 +5,14 @@ import {
   Layers,
   TrendingUp,
   LineChart,
+  ArrowLeftRight,
   LogOut,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/resumen',      label: 'Resumen',      Icon: LayoutDashboard },
   { to: '/posiciones',   label: 'Posiciones',   Icon: Layers          },
+  { to: '/movimientos',  label: 'Movimientos',  Icon: ArrowLeftRight  },
   { to: '/rentabilidad', label: 'Rentabilidad', Icon: TrendingUp      },
   { to: '/mercado',      label: 'Mercado',       Icon: LineChart       },
 ];

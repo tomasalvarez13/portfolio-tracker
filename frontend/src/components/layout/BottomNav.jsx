@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Layers, TrendingUp, LineChart } from 'lucide-react';
+import { LayoutDashboard, Layers, TrendingUp, LineChart, ArrowLeftRight } from 'lucide-react';
 
 const NAV = [
   { to: '/resumen',      label: 'Resumen',      Icon: LayoutDashboard },
   { to: '/posiciones',   label: 'Posiciones',   Icon: Layers          },
-  { to: '/rentabilidad', label: 'Rentabilidad', Icon: TrendingUp      },
+  { to: '/movimientos',  label: 'Movs',         Icon: ArrowLeftRight  },
+  { to: '/rentabilidad', label: 'Rentab.',      Icon: TrendingUp      },
   { to: '/mercado',      label: 'Mercado',       Icon: LineChart       },
 ];
 

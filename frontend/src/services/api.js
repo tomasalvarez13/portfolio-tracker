@@ -47,6 +47,8 @@ export const forceSnapshot = (body) => api.post('/portfolio/snapshot', body).the
 export const getRentabilidad = (params) => api.get('/portfolio/rentabilidad', { params }).then((r) => r.data);
 export const getMonthlyRentabilidad = (params) =>
   api.get('/portfolio/rentabilidad/monthly', { params }).then((r) => r.data);
+export const getTWR = (params) =>
+  api.get('/portfolio/twr', { params }).then((r) => r.data);
 
 // --- Mercado ---
 export const getMarket = () => api.get('/market').then((r) => r.data);
