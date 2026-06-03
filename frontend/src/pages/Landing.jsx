@@ -62,8 +62,8 @@ function DemoResumen() {
           { l: 'Rent. real',   v: '+6.2%'  },
           { l: 'Neto inv.',    v: '$9.8M'  },
         ].map(({ l, v }, i) => (
-          <div key={l} className="bg-white/5 rounded-xl p-2.5 text-center"
-            style={{ animation: `lnd-fadein .35s ease both ${i * 80}ms` }}>
+          <div key={l} className="rounded-xl p-2.5 text-center"
+            style={{ background: '#1a2332', animation: `lnd-fadein .35s ease both ${i * 80}ms` }}>
             <div className="text-[10px] text-gray-400">{l}</div>
             <div className="font-semibold text-sm mt-0.5 text-white">{v}</div>
           </div>
@@ -89,9 +89,9 @@ function DemoPosiciones() {
   return (
     <div className="p-3 space-y-2">
       {MOCK_POS.map((grp, gi) => (
-        <div key={grp.cat} className="rounded-xl border border-white/8 overflow-hidden"
-          style={{ animation: `lnd-fadein .35s ease both ${gi * 120}ms` }}>
-          <div className="flex items-center justify-between px-3 py-2 bg-white/5">
+        <div key={grp.cat} className="rounded-xl overflow-hidden"
+          style={{ background: '#161b22', animation: `lnd-fadein .35s ease both ${gi * 120}ms` }}>
+          <div className="flex items-center justify-between px-3 py-2" style={{ background: '#1e2a3a' }}>
             <div>
               <div className="text-xs font-medium text-white">▾ {grp.cat}</div>
               <div className="text-[10px] text-gray-400">{grp.items.length} instrumentos</div>
@@ -99,7 +99,8 @@ function DemoPosiciones() {
             <div className="text-sm font-semibold text-white">{grp.catVal}</div>
           </div>
           {grp.items.map((p, pi) => (
-            <div key={p.name} className="flex items-center gap-2 px-3 py-2 border-t border-white/5"
+            <div key={p.name} className="flex items-center gap-2 px-3 py-2"
+              style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
               style={{ animation: `lnd-fadein .3s ease both ${gi * 120 + pi * 80 + 100}ms` }}>
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-medium text-white truncate">{p.name}</div>
@@ -146,15 +147,17 @@ function DemoChat() {
               </div>
             </div>
           ) : m.role === 'user' ? (
-            <div className="bg-blue-500/20 text-white text-xs rounded-2xl rounded-tr-sm px-3 py-2 max-w-[85%]">{m.text}</div>
+            <div className="text-white text-xs rounded-2xl rounded-tr-sm px-3 py-2 max-w-[85%]"
+              style={{ background: 'rgba(59,130,246,0.25)' }}>{m.text}</div>
           ) : (
-            <div className="bg-white/6 border border-white/10 text-gray-200 text-xs rounded-2xl rounded-tl-sm px-3 py-2 max-w-[90%] leading-relaxed">{m.text}</div>
+            <div className="text-gray-200 text-xs rounded-2xl rounded-tl-sm px-3 py-2 max-w-[90%] leading-relaxed"
+              style={{ background: '#1e2a3a' }}>{m.text}</div>
           )}
         </div>
       ))}
       {vis < CHAT_MSGS.length && (
         <div className="flex justify-start">
-          <div className="bg-white/6 border border-white/10 rounded-2xl px-3 py-2.5 flex gap-1.5">
+          <div className="rounded-2xl px-3 py-2.5 flex gap-1.5" style={{ background: '#1e2a3a' }}>
             {[0,1,2].map(d => (
               <span key={d} className="w-1.5 h-1.5 rounded-full bg-gray-400"
                 style={{ animation:`lnd-pulse 1s ease infinite ${d*200}ms` }}/>
@@ -207,25 +210,28 @@ function AppDemo() {
       <div className="rounded-2xl border border-white/12 overflow-hidden shadow-2xl"
         style={{ background: 'linear-gradient(145deg, #161b22, #0d1117)' }}>
         {/* Fake browser bar */}
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/8 bg-white/3">
+        <div className="flex items-center gap-2 px-4 py-2.5"
+          style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', background: '#111827' }}>
           <div className="flex gap-1.5">
             {['#ff5f56','#ffbd2e','#27c93f'].map(c => (
               <div key={c} className="w-2.5 h-2.5 rounded-full" style={{ background: c, opacity: .7 }}/>
             ))}
           </div>
-          <div className="flex-1 mx-3 bg-white/8 rounded-md px-3 py-0.5 text-[10px] text-gray-400 text-center">
+          <div className="flex-1 mx-3 rounded-md px-3 py-0.5 text-[10px] text-gray-400 text-center"
+            style={{ background: 'rgba(255,255,255,0.06)' }}>
             portfolio-tracker.app
           </div>
         </div>
 
         {/* Sidebar + content */}
-        <div className="flex" style={{ minHeight: 260 }}>
+        <div className="flex" style={{ minHeight: 260, background: '#0d1117' }}>
           {/* Mini sidebar */}
-          <div className="w-28 border-r border-white/6 py-3 px-2 space-y-0.5 shrink-0 hidden sm:block bg-white/2">
+          <div className="w-28 border-r py-3 px-2 space-y-0.5 shrink-0 hidden sm:block"
+            style={{ borderColor: 'rgba(255,255,255,0.06)', background: '#111827' }}>
             {TABS.map((t, i) => (
               <div key={t.key} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] transition-colors cursor-default ${
-                i === tab ? 'bg-blue-500/15 text-blue-400' : 'text-gray-500'
-              }`}>
+                i === tab ? 'text-blue-400' : 'text-gray-500'
+              }`} style={{ background: i === tab ? 'rgba(59,130,246,0.12)' : 'transparent' }}>
                 <div className="w-1.5 h-1.5 rounded-full shrink-0"
                   style={{ background: i === tab ? '#3b82f6' : '#374151' }}/>
                 {t.label}
@@ -233,7 +239,7 @@ function AppDemo() {
             ))}
           </div>
           {/* Content */}
-          <div className="flex-1 overflow-hidden" key={tab}>
+          <div className="flex-1 overflow-hidden" key={tab} style={{ background: '#0d1117' }}>
             <Component />
           </div>
         </div>
