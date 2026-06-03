@@ -97,8 +97,8 @@ function CustomTooltip({ active, payload, label, currency, aportes, rangeData, i
   );
 }
 
-export default function EvolutionChart({ snapshots, aportes = [], currency = 'CLP', onPointClick }) {
-  const [range, setRange]       = useState('all');
+export default function EvolutionChart({ snapshots, aportes = [], currency = 'CLP', onPointClick, onRangeChange, defaultRange = 'all' }) {
+  const [range, setRange]       = useState(defaultRange);
   const [refLeft, setRefLeft]   = useState(null);   // inicio drag
   const [refRight, setRefRight] = useState(null);   // fin drag
   const [selectedRange, setSelectedRange] = useState(null); // { from, to } persistente
@@ -108,6 +108,21 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
     () => filterByRange(snapshots, range, aportes),
     [snapshots, range, aportes]
   );
+
+  // Emitir cambio del rango efectivo al padre.
+  // Si hay selección persistente (drag), gana sobre el filtro del selector.
+  useEffect(() => {
+    if (!onRangeChange) return;
+    if (selectedRange) {
+      onRangeChange({ from: selectedRange.from, to: selectedRange.to, source: 'drag' });
+    } else if (filteredSnaps.length >= 2) {
+      onRangeChange({
+        from: filteredSnaps[0].date,
+        to: filteredSnaps[filteredSnaps.length - 1].date,
+        source: 'selector',
+      });
+    }
+  }, [selectedRange, filteredSnaps, onRangeChange]);
 
   const data = filteredSnaps.map(s => ({
     date: s.date,
