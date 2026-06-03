@@ -20,13 +20,14 @@ function requireAdminToken(req, res, next) {
 router.use(requireAdminToken);
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
-// Lista usuarios con stats de uso.
 router.get('/users', async (req, res) => {
   try {
-    // Usuarios desde Supabase Auth (emails, fechas)
-    const { data: authData, error } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
-    if (error) throw error;
-    const authUsers = authData.users;
+    // Usuarios desde Supabase Auth — si falla, seguimos con datos de la DB
+    let authUsers = [];
+    try {
+      const { data: authData, error } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
+      if (!error) authUsers = authData.users;
+    } catch { /* sin service role key — usamos solo DB */ }
 
     // Stats por usuario desde la DB
     const { rows: stats } = await query(`
@@ -63,18 +64,18 @@ router.get('/users', async (req, res) => {
 });
 
 // ── GET /api/admin/stats ──────────────────────────────────────────────────────
-// Métricas globales de la plataforma.
 router.get('/stats', async (req, res) => {
   try {
-    const { data: authData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    let totalUsers = 0, activeUsers = 0, confirmedUsers = 0;
+    try {
+      const { data: authData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
+      const now = new Date();
+      const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+      totalUsers    = authData.users.length;
+      activeUsers   = authData.users.filter(u => u.last_sign_in_at && u.last_sign_in_at > thirtyDaysAgo).length;
+      confirmedUsers = authData.users.filter(u => u.email_confirmed_at).length;
+    } catch { /* sin service role key */ }
 
-    const totalUsers  = authData.users.length;
-    const activeUsers = authData.users.filter(u =>
-      u.last_sign_in_at && u.last_sign_in_at > thirtyDaysAgo
-    ).length;
-    const confirmedUsers = authData.users.filter(u => u.email_confirmed_at).length;
 
     const { rows: dbStats } = await query(`
       SELECT

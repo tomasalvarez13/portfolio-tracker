@@ -19,20 +19,33 @@ function StatCard({ label, value, Icon, color = 'text-accent' }) {
 }
 
 export default function AdminDashboard() {
-  const [stats, setStats]   = useState(null);
-  const [users, setUsers]   = useState([]);
+  const [stats, setStats]     = useState(null);
+  const [users, setUsers]     = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const navigate            = useNavigate();
+  const [loadError, setLoadError] = useState(null);
+  const [search, setSearch]   = useState('');
+  const navigate              = useNavigate();
 
-  useEffect(() => {
+  async function loadData() {
     const token = localStorage.getItem('admin_token');
     if (!token) { navigate('/admin/login'); return; }
-    Promise.all([getAdminStats(), getAdminUsers()])
-      .then(([s, u]) => { setStats(s); setUsers(u.users); })
-      .catch(() => { localStorage.removeItem('admin_token'); navigate('/admin/login'); })
-      .finally(() => setLoading(false));
-  }, [navigate]);
+    setLoading(true); setLoadError(null);
+    try {
+      const [s, u] = await Promise.all([getAdminStats(), getAdminUsers()]);
+      setStats(s); setUsers(u.users);
+    } catch (e) {
+      // Solo cerrar sesión si el token es inválido (401). En cualquier otro error
+      // (backend dormido, 500) mostramos el error y dejamos reintentar.
+      if (e.response?.status === 401) {
+        localStorage.removeItem('admin_token');
+        navigate('/admin/login');
+      } else {
+        setLoadError(e.response?.data?.error || e.message || 'Error al conectar con el servidor');
+      }
+    } finally { setLoading(false); }
+  }
+
+  useEffect(() => { loadData(); }, []);
 
   function handleLogout() {
     localStorage.removeItem('admin_token');
@@ -53,7 +66,30 @@ export default function AdminDashboard() {
 
   if (loading) return (
     <div className="min-h-screen grid place-items-center">
-      <div className="text-muted text-sm">Cargando…</div>
+      <div className="text-center space-y-2">
+        <div className="text-muted text-sm">Conectando con el servidor…</div>
+        <div className="text-xs text-muted/60">(El backend puede tardar ~30s en despertar)</div>
+      </div>
+    </div>
+  );
+
+  if (loadError) return (
+    <div className="min-h-screen grid place-items-center px-4">
+      <div className="text-center space-y-4 max-w-sm">
+        <div className="text-2xl">⚠️</div>
+        <div className="text-sm font-medium">Error al cargar el panel</div>
+        <div className="text-xs text-muted bg-bg-card border border-bg-border rounded-lg px-4 py-3 text-left break-all">
+          {loadError}
+        </div>
+        <button onClick={loadData}
+          className="px-5 py-2 bg-accent hover:bg-accent/90 text-white rounded-lg text-sm font-medium">
+          Reintentar
+        </button>
+        <button onClick={() => { localStorage.removeItem('admin_token'); navigate('/admin/login'); }}
+          className="block mx-auto text-xs text-muted hover:text-gray-300 mt-1">
+          Volver al login
+        </button>
+      </div>
     </div>
   );
 
