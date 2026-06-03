@@ -346,11 +346,20 @@ export default function Landing() {
             <p className="text-gray-400 max-w-xl mx-auto text-sm">Diseñado para inversores individuales que quieren un control real de su patrimonio.</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {FEATURES.map(({ Icon, title, desc }) => (
-              <div key={title}
-                className="rounded-2xl border border-white/8 bg-white/3 p-6 hover:bg-white/5 hover:border-white/12 transition-colors">
-                <div className="w-10 h-10 rounded-xl bg-blue-500/15 flex items-center justify-center mb-4">
-                  <Icon size={18} className="text-blue-400" />
+            {FEATURES.map(({ Icon, title, desc }, i) => (
+              <div key={title} className="rounded-2xl p-6 transition-opacity hover:opacity-90"
+                style={{
+                  background: [
+                    'linear-gradient(135deg, rgba(59,130,246,0.10), rgba(16,185,129,0.05))',
+                    'linear-gradient(135deg, rgba(16,185,129,0.09), rgba(59,130,246,0.04))',
+                    'linear-gradient(135deg, rgba(139,92,246,0.09), rgba(59,130,246,0.05))',
+                    'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(236,72,153,0.04))',
+                    'linear-gradient(135deg, rgba(245,158,11,0.08), rgba(59,130,246,0.04))',
+                    'linear-gradient(135deg, rgba(16,185,129,0.08), rgba(139,92,246,0.04))',
+                  ][i % 6],
+                }}>
+                <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center mb-4">
+                  <Icon size={18} className="text-white/80" />
                 </div>
                 <h3 className="font-semibold text-sm mb-2">{title}</h3>
                 <p className="text-sm text-gray-400 leading-relaxed">{desc}</p>
