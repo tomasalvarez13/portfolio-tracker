@@ -26,9 +26,7 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="px-5 pt-6 pb-4 border-b border-bg-border">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-accent/20 flex items-center justify-center shrink-0">
-            <TrendingUp size={15} className="text-accent" />
-          </div>
+          <img src="/favicon.svg" alt="Portfolio" className="w-8 h-8 shrink-0" />
           <div>
             <div className="text-sm font-semibold leading-tight">Portfolio</div>
             <div className="text-[10px] text-muted leading-tight">Tracker</div>
