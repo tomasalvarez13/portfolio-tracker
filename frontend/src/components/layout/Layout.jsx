@@ -18,8 +18,7 @@ export default function Layout() {
   function handleDismiss(mode) {
     if (key) localStorage.setItem(key, 'done');
     setShowOnboarding(false);
-    if (mode === 'cartola') navigate('/posiciones');
-    else if (mode === 'manual') navigate('/posiciones');
+    navigate('/app/posiciones');
   }
 
   return (

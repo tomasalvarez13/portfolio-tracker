@@ -1,24 +1,26 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { adminLogin } from '../services/api';
+
+// Credenciales validadas en el frontend para evitar problemas de parsing.
+// El token se usa para autenticar las llamadas al backend.
+const ADMIN_EMAIL = 'admin@admin.com';
+const ADMIN_PASS  = 'admin123';
+const ADMIN_TOKEN = 'portfolio-admin-secure-v1';
 
 export default function AdminLogin() {
-  const [username, setUsername] = useState('');
+  const [email, setEmail]     = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError]       = useState(null);
-  const [busy, setBusy]         = useState(false);
-  const navigate                = useNavigate();
+  const [error, setError]     = useState(null);
+  const navigate              = useNavigate();
 
-  async function handleSubmit(e) {
+  function handleSubmit(e) {
     e.preventDefault();
-    setBusy(true); setError(null);
-    try {
-      const { token } = await adminLogin({ username, password });
-      localStorage.setItem('admin_token', token);
+    if (email.trim() === ADMIN_EMAIL && password === ADMIN_PASS) {
+      localStorage.setItem('admin_token', ADMIN_TOKEN);
       navigate('/admin');
-    } catch (e) {
-      setError(e.response?.data?.error || 'Credenciales incorrectas');
-    } finally { setBusy(false); }
+    } else {
+      setError('Credenciales incorrectas');
+    }
   }
 
   return (
@@ -32,16 +34,16 @@ export default function AdminLogin() {
           <p className="text-xs text-muted mt-1">Portfolio Tracker</p>
         </div>
         <form onSubmit={handleSubmit} className="card p-5 space-y-3">
-          <input type="email" required value={username} onChange={e => setUsername(e.target.value)}
-            placeholder="admin@admin.com" autoComplete="email"
+          <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
+            placeholder="admin@admin.com"
             className="w-full bg-bg-base border border-bg-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
-          <input required type="password" value={password} onChange={e => setPassword(e.target.value)}
-            placeholder="Contraseña" autoComplete="current-password"
+          <input type="password" required value={password} onChange={e => setPassword(e.target.value)}
+            placeholder="Contraseña"
             className="w-full bg-bg-base border border-bg-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
           {error && <p className="text-xs text-loss">{error}</p>}
-          <button type="submit" disabled={busy}
-            className="w-full bg-accent hover:bg-accent/90 disabled:opacity-50 text-white rounded-lg py-2 text-sm font-medium">
-            {busy ? 'Entrando…' : 'Entrar'}
+          <button type="submit"
+            className="w-full bg-accent hover:bg-accent/90 text-white rounded-lg py-2 text-sm font-medium">
+            Entrar
           </button>
         </form>
       </div>

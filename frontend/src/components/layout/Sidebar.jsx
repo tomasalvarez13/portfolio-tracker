@@ -11,12 +11,12 @@ import {
 } from 'lucide-react';
 
 const NAV = [
-  { to: '/resumen',      label: 'Resumen',      Icon: LayoutDashboard },
-  { to: '/posiciones',   label: 'Posiciones',   Icon: Layers          },
-  { to: '/movimientos',  label: 'Movimientos',  Icon: ArrowLeftRight  },
-  { to: '/rentabilidad', label: 'Rentabilidad', Icon: TrendingUp      },
-  { to: '/mercado',      label: 'Mercado',      Icon: LineChart       },
-  { to: '/chat',         label: 'Chat IA',      Icon: MessageSquare   },
+  { to: '/app/resumen',      label: 'Resumen',      Icon: LayoutDashboard },
+  { to: '/app/posiciones',   label: 'Posiciones',   Icon: Layers          },
+  { to: '/app/movimientos',  label: 'Movimientos',  Icon: ArrowLeftRight  },
+  { to: '/app/rentabilidad', label: 'Rentabilidad', Icon: TrendingUp      },
+  { to: '/app/mercado',      label: 'Mercado',      Icon: LineChart       },
+  { to: '/app/chat',         label: 'Chat IA',      Icon: MessageSquare   },
 ];
 
 export default function Sidebar() {

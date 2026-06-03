@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth.jsx';
 
 export default function Login() {
   const { session, signIn, signUp } = useAuth();
-  const [mode, setMode] = useState('login'); // 'login' | 'signup'
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState(searchParams.get('signup') === '1' ? 'signup' : 'login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -12,7 +13,7 @@ export default function Login() {
   const [info, setInfo] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  if (session) return <Navigate to="/" replace />;
+  if (session) return <Navigate to="/app/resumen" replace />;
 
   async function handleSubmit(e) {
     e.preventDefault();

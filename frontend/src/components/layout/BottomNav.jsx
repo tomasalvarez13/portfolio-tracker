@@ -2,11 +2,11 @@ import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Layers, TrendingUp, ArrowLeftRight, MessageSquare } from 'lucide-react';
 
 const NAV = [
-  { to: '/resumen',      label: 'Resumen',    Icon: LayoutDashboard },
-  { to: '/posiciones',   label: 'Posiciones', Icon: Layers          },
-  { to: '/movimientos',  label: 'Movs',       Icon: ArrowLeftRight  },
-  { to: '/rentabilidad', label: 'Rentab.',    Icon: TrendingUp      },
-  { to: '/chat',         label: 'Chat',       Icon: MessageSquare   },
+  { to: '/app/resumen',      label: 'Resumen',    Icon: LayoutDashboard },
+  { to: '/app/posiciones',   label: 'Posiciones', Icon: Layers          },
+  { to: '/app/movimientos',  label: 'Movs',       Icon: ArrowLeftRight  },
+  { to: '/app/rentabilidad', label: 'Rentab.',    Icon: TrendingUp      },
+  { to: '/app/chat',         label: 'Chat',       Icon: MessageSquare   },
 ];
 
 export default function BottomNav() {
