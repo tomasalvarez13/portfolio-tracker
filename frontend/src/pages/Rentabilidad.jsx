@@ -38,19 +38,19 @@ export default function Rentabilidad() {
     })();
   }, []);
 
-  // Cuando cambia el rango (selector o drag), refresca métricas
+  // Cuando cambia el rango (selector o drag), refresca métricas.
+  // Cada endpoint se llama por separado para que si TWR falla (ej: backend viejo
+  // sin ese endpoint), las otras métricas igual se muestren.
   const refreshMetrics = useCallback(async (from, to) => {
     if (!from || !to) return;
-    try {
-      const [r, t, m] = await Promise.all([
-        getRentabilidad({ from, to }),
-        getTWR({ from, to }),
-        getMonthlyRentabilidad({ from, to }),
-      ]);
-      setRent(r); setTwr(t); setMonthly(m);
-    } catch (e) {
-      setError(e.response?.data?.error || e.message);
-    }
+    setError(null);
+    const safe = (p) => p.catch(() => null);
+    const [r, t, m] = await Promise.all([
+      safe(getRentabilidad({ from, to })),
+      safe(getTWR({ from, to })),
+      safe(getMonthlyRentabilidad({ from, to })),
+    ]);
+    setRent(r); setTwr(t); setMonthly(m || []);
   }, []);
 
   useEffect(() => {
