@@ -20,17 +20,18 @@ export default function Posiciones() {
   const posHook  = usePersistedFetch(`positions_${user?.id}`, getPositions);
   const instHook = usePersistedFetch(`instruments_${user?.id}`, getInstruments);
 
-  const [editing, setEditing]         = useState(null);
+  // mode: null | 'choose' | 'new' | 'aporte'
+  const [mode, setMode]               = useState(null);
+  const [editing, setEditing]         = useState(null); // posición existente a editar
   const [pricing, setPricing]         = useState(null);
-  const [aportando, setAportando]     = useState(null);
-  const [confirmDelete, setConfirmDelete] = useState(null); // id de posición a confirmar
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [refreshing, setRefreshing]   = useState(false);
   const [mutError, setMutError]       = useState(null);
   const [open, setOpen]               = useState({});
 
   if (posHook.loading) return <Spinner />;
 
-  const data       = posHook.data;
+  const data        = posHook.data;
   const instruments = instHook.data || [];
   const positions   = data?.positions || [];
   const totalClp    = data?.totalClp || 0;
@@ -39,12 +40,16 @@ export default function Posiciones() {
     || posHook.error?.response?.data?.error || posHook.error?.message
     || null;
 
+  function closeAll() {
+    setMode(null); setEditing(null); setPricing(null); setMutError(null);
+  }
+
   async function handleSave(body) {
     setMutError(null);
     try {
       if (editing?.id) await updatePosition(editing.id, body);
       else await createPosition(body);
-      setEditing(null);
+      closeAll();
       await posHook.reload();
     } catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
@@ -68,16 +73,15 @@ export default function Posiciones() {
     finally { setRefreshing(false); }
   }
 
-  async function handleAporte(body) {
+  async function handleAporte(positionId, body) {
     setMutError(null);
     try {
-      await addAporte(aportando.id, body);
-      setAportando(null);
+      await addAporte(positionId, body);
+      setMode(null);
       await posHook.reload();
     } catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
 
-  // Agrupar por categoría de alto nivel
   const groups = {};
   for (const p of positions) {
     const cat = categoryOf(p.type);
@@ -103,8 +107,10 @@ export default function Posiciones() {
             className="px-3 py-2 rounded-lg text-xs lg:text-sm border border-bg-border text-muted hover:bg-bg-hover disabled:opacity-50">
             {refreshing ? 'Actualizando…' : '↻ Actualizar'}
           </button>
-          <button onClick={() => setEditing({})}
-            className="px-3 py-2 rounded-lg text-xs lg:text-sm bg-accent hover:bg-accent/90 text-white">+ Nueva</button>
+          <button onClick={() => { closeAll(); setMode('choose'); }}
+            className="px-3 py-2 rounded-lg text-xs lg:text-sm bg-accent hover:bg-accent/90 text-white">
+            + Nueva
+          </button>
         </div>
       </div>
 
@@ -118,15 +124,49 @@ export default function Posiciones() {
 
       {displayError && <ErrorBox message={displayError} />}
 
+      {/* Elección de flujo */}
+      {mode === 'choose' && (
+        <div className="card p-5 space-y-4">
+          <h3 className="font-medium">¿Qué querés registrar?</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => setMode('new')}
+              className="p-4 rounded-lg border border-bg-border hover:border-accent/60 hover:bg-accent/5 text-left transition-colors">
+              <div className="font-medium text-sm">Nueva posición</div>
+              <div className="text-xs text-muted mt-1">Instrumento que aún no tenés en el portafolio</div>
+            </button>
+            <button onClick={() => setMode('aporte')}
+              className="p-4 rounded-lg border border-bg-border hover:border-gain/60 hover:bg-gain/5 text-left transition-colors">
+              <div className="font-medium text-sm text-gain">Aporte a existente</div>
+              <div className="text-xs text-muted mt-1">Agregar plata a un instrumento que ya tenés</div>
+            </button>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={() => setMode(null)} className="text-xs text-muted hover:text-gray-200">Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {mode === 'new' && (
+        <PositionForm instruments={instruments} initial={null}
+          onSubmit={handleSave} onCancel={() => setMode(null)} />
+      )}
+
+      {mode === 'aporte' && (
+        <AporteForm
+          positions={positions}
+          onSubmit={(positionId, body) => handleAporte(positionId, body)}
+          onCancel={() => setMode(null)}
+        />
+      )}
+
+      {/* Editar posición existente (desde botón "editar" en la fila) */}
       {editing && (
-        <PositionForm instruments={instruments} initial={editing.id ? editing : null}
+        <PositionForm instruments={instruments} initial={editing}
           onSubmit={handleSave} onCancel={() => setEditing(null)} />
       )}
+
       {pricing && (
         <ManualPriceForm position={pricing} onSubmit={handleManualPrice} onCancel={() => setPricing(null)} />
-      )}
-      {aportando && (
-        <AporteForm position={aportando} onSubmit={handleAporte} onCancel={() => setAportando(null)} />
       )}
 
       {positions.length === 0 ? (
@@ -202,8 +242,7 @@ export default function Posiciones() {
                                   {p.api_source === 'manual' && (
                                     <button onClick={() => setPricing(p)} className="text-xs text-accent hover:underline mr-2">precio</button>
                                   )}
-                                  <button onClick={() => setAportando(p)} className="text-xs text-gain hover:underline mr-2">aporte</button>
-                                  <button onClick={() => setEditing(p)} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
+                                  <button onClick={() => { closeAll(); setEditing(p); }} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
                                   <button onClick={() => setConfirmDelete(p.id)} className="text-xs text-muted hover:text-loss">eliminar</button>
                                 </>
                               )}
