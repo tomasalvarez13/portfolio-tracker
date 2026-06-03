@@ -39,7 +39,7 @@ router.post('/parse-cartola', upload.single('file'), async (req, res) => {
 
   try {
     const genAI = getClient();
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const { rows: instruments } = await query(
       'SELECT id, name, alias, ticker, type FROM instruments ORDER BY name'
@@ -201,7 +201,7 @@ ${portfolioCtx}
 Podés responder preguntas sobre el portafolio, hacer análisis y recomendaciones, y proponer registrar movimientos usando las herramientas disponibles. El usuario siempre confirma antes de que se ejecute cualquier acción de escritura.`;
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       systemInstruction,
       tools: [{ functionDeclarations: FUNCTION_DECLARATIONS }],
     });
