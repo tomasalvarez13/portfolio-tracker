@@ -6,8 +6,8 @@ import { supabaseAdmin } from '../config/db.js';
 
 const router = Router();
 
-const ADMIN_USER  = process.env.ADMIN_USER  || 'admin@admin.com';
-const ADMIN_PASS  = process.env.ADMIN_PASS  || 'admin123';
+const ADMIN_USER  = 'admin@admin.com';
+const ADMIN_PASS  = 'admin123';
 const ADMIN_TOKEN = process.env.ADMIN_SECRET || 'portfolio-admin-token-v1';
 
 // Middleware de token (aplica a todas las rutas excepto /auth)
@@ -21,7 +21,7 @@ function requireAdminToken(req, res, next) {
 // No requiere token previo — devuelve el token si las credenciales son correctas.
 router.post('/auth', (req, res) => {
   const { username, password } = req.body;
-  if (username !== ADMIN_USER || password !== ADMIN_PASS) {
+  if (username?.trim() !== ADMIN_USER || password?.trim() !== ADMIN_PASS) {
     return res.status(401).json({ error: 'Credenciales incorrectas' });
   }
   res.json({ token: ADMIN_TOKEN });
