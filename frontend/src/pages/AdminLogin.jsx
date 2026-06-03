@@ -32,8 +32,8 @@ export default function AdminLogin() {
           <p className="text-xs text-muted mt-1">Portfolio Tracker</p>
         </div>
         <form onSubmit={handleSubmit} className="card p-5 space-y-3">
-          <input type="text" required value={username} onChange={e => setUsername(e.target.value)}
-            placeholder="Usuario" autoComplete="off"
+          <input type="email" required value={username} onChange={e => setUsername(e.target.value)}
+            placeholder="admin@admin.com" autoComplete="email"
             className="w-full bg-bg-base border border-bg-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
           <input required type="password" value={password} onChange={e => setPassword(e.target.value)}
             placeholder="Contraseña" autoComplete="current-password"

@@ -6,7 +6,7 @@ import { supabaseAdmin } from '../config/db.js';
 
 const router = Router();
 
-const ADMIN_USER  = process.env.ADMIN_USER  || 'admin';
+const ADMIN_USER  = process.env.ADMIN_USER  || 'admin@admin.com';
 const ADMIN_PASS  = process.env.ADMIN_PASS  || 'admin123';
 const ADMIN_TOKEN = process.env.ADMIN_SECRET || 'portfolio-admin-token-v1';
 
