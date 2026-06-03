@@ -71,17 +71,18 @@ router.post('/:id/aporte', async (req, res) => {
 
   // El monto CLP del movimiento: si el delta ya es CLP lo usamos directamente; si no, el frontend lo provee.
   const clpForMovement = delta_amount_clp != null ? Number(delta_amount_clp) : (movement_clp != null ? Number(movement_clp) : null);
+  const movDate = date || new Date().toISOString().slice(0, 10);
   let movement = null;
   if (clpForMovement != null) {
-    const movDate = date || new Date().toISOString().slice(0, 10);
     const { rows: [mov] } = await query(
       `INSERT INTO movements (user_id, instrument_id, date, type, amount_clp, notes)
        VALUES ($1, NULL, $2, 'aporte', $3, $4) RETURNING *`,
       [req.user.id, movDate, clpForMovement, notes ?? null]
     );
     movement = mov;
-    try { await computeAndSaveSnapshot(req.user.id, movDate); } catch {}
   }
+  // Siempre recalcular snapshot para reflejar el cambio de posición en el resumen.
+  try { await computeAndSaveSnapshot(req.user.id, movDate); } catch {}
 
   res.status(201).json({ position: updatedPos, movement });
 });
