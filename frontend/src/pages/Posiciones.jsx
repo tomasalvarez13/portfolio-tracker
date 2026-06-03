@@ -80,9 +80,17 @@ export default function Posiciones() {
 
   async function handleRefresh() {
     setRefreshing(true); setMutError(null);
-    try { await refreshPrices(); await posHook.reload(); }
-    catch (e) { setMutError(e.response?.data?.error || e.message); }
-    finally { setRefreshing(false); }
+    try {
+      await refreshPrices(); // responde inmediato, procesa en background
+      // Recargar en 3 etapas: 5s, 20s, 45s — para capturar cuando terminen los fetches lentos
+      const reload = () => posHook.reload().catch(() => {});
+      setTimeout(reload, 5_000);
+      setTimeout(reload, 20_000);
+      setTimeout(() => { reload(); setRefreshing(false); }, 45_000);
+    } catch (e) {
+      setMutError(e.response?.data?.error || e.message);
+      setRefreshing(false);
+    }
   }
 
   async function handleAporte(positionId, body) {

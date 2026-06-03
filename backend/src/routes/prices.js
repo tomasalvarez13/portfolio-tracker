@@ -56,15 +56,22 @@ router.post('/manual', async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
-// POST /api/prices/refresh -> dispara fetch de todos los precios + snapshots (dev/manual)
-router.post('/refresh', async (req, res) => {
-  try {
-    const report = await refreshAllPrices();
-    const snapshots = await snapshotAllUsers(report.date);
-    res.json({ report, snapshots });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+// POST /api/prices/refresh -> dispara fetch en background y responde de inmediato.
+// Evita timeout de 30s de Render free tier cuando hay muchos instrumentos.
+router.post('/refresh', (req, res) => {
+  res.json({ ok: true, message: 'Actualización iniciada. Los precios se refrescarán en los próximos minutos.' });
+  // Fire-and-forget: no bloquea la respuesta HTTP
+  (async () => {
+    try {
+      const report = await refreshAllPrices();
+      await snapshotAllUsers(report.date);
+      console.log('[prices/refresh] completado:', {
+        ok: report.ok.length, stale: report.stale.length, failed: report.failed.length,
+      });
+    } catch (e) {
+      console.error('[prices/refresh] error en background:', e.message);
+    }
+  })();
 });
 
 export default router;
