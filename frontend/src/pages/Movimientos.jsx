@@ -73,7 +73,8 @@ export default function Movimientos() {
   const [movs, setMovs]           = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
-  const [editing, setEditing]     = useState(null);
+  const [editing, setEditing]       = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null); // id del movimiento a confirmar
   const [filterType, setFilterType] = useState('all');
 
   const load = useCallback(async () => {
@@ -98,8 +99,7 @@ export default function Movimientos() {
     } catch (e) { setError(e.response?.data?.error || e.message); }
   }
   async function handleDelete(id) {
-    if (!confirm('¿Eliminar este movimiento?')) return;
-    try { await deleteMovement(id); await load(); }
+    try { await deleteMovement(id); setConfirmDelete(null); await load(); }
     catch (e) { setError(e.response?.data?.error || e.message); }
   }
 
@@ -228,8 +228,18 @@ export default function Movimientos() {
                   </td>
                   <td className="px-4 py-3 text-xs text-muted truncate max-w-[260px]" title={m.notes}>{m.notes || '—'}</td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
-                    <button onClick={() => setEditing(m)} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
-                    <button onClick={() => handleDelete(m.id)} className="text-xs text-muted hover:text-loss">eliminar</button>
+                    {confirmDelete === m.id ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="text-xs text-muted">¿Eliminar?</span>
+                        <button onClick={() => handleDelete(m.id)} className="text-xs text-loss font-medium hover:underline">Sí</button>
+                        <button onClick={() => setConfirmDelete(null)} className="text-xs text-muted hover:text-gray-200">No</button>
+                      </span>
+                    ) : (
+                      <>
+                        <button onClick={() => setEditing(m)} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
+                        <button onClick={() => setConfirmDelete(m.id)} className="text-xs text-muted hover:text-loss">eliminar</button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

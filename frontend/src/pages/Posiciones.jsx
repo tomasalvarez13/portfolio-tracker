@@ -20,12 +20,13 @@ export default function Posiciones() {
   const posHook  = usePersistedFetch(`positions_${user?.id}`, getPositions);
   const instHook = usePersistedFetch(`instruments_${user?.id}`, getInstruments);
 
-  const [editing, setEditing]     = useState(null);
-  const [pricing, setPricing]     = useState(null);
-  const [aportando, setAportando] = useState(null); // posición a la que agregar aporte
-  const [refreshing, setRefreshing] = useState(false);
-  const [mutError, setMutError]   = useState(null);
-  const [open, setOpen]           = useState({});
+  const [editing, setEditing]         = useState(null);
+  const [pricing, setPricing]         = useState(null);
+  const [aportando, setAportando]     = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null); // id de posición a confirmar
+  const [refreshing, setRefreshing]   = useState(false);
+  const [mutError, setMutError]       = useState(null);
+  const [open, setOpen]               = useState({});
 
   if (posHook.loading) return <Spinner />;
 
@@ -49,9 +50,8 @@ export default function Posiciones() {
   }
 
   async function handleDelete(id) {
-    if (!confirm('¿Eliminar esta posición?')) return;
     setMutError(null);
-    try { await deletePosition(id); await posHook.reload(); }
+    try { await deletePosition(id); setConfirmDelete(null); await posHook.reload(); }
     catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
 
@@ -191,12 +191,22 @@ export default function Posiciones() {
                             <td className="px-4 py-2.5 text-right num text-muted">{formatUSD(p.value_usd)}</td>
                             <td className="px-4 py-2.5 text-right num text-muted">{formatPct(p.pct_portfolio, { sign: false })}</td>
                             <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                              {p.api_source === 'manual' && (
-                                <button onClick={() => setPricing(p)} className="text-xs text-accent hover:underline mr-2">precio</button>
+                              {confirmDelete === p.id ? (
+                                <span className="inline-flex items-center gap-2">
+                                  <span className="text-xs text-muted">¿Eliminar?</span>
+                                  <button onClick={() => handleDelete(p.id)} className="text-xs text-loss font-medium hover:underline">Sí</button>
+                                  <button onClick={() => setConfirmDelete(null)} className="text-xs text-muted hover:text-gray-200">No</button>
+                                </span>
+                              ) : (
+                                <>
+                                  {p.api_source === 'manual' && (
+                                    <button onClick={() => setPricing(p)} className="text-xs text-accent hover:underline mr-2">precio</button>
+                                  )}
+                                  <button onClick={() => setAportando(p)} className="text-xs text-gain hover:underline mr-2">aporte</button>
+                                  <button onClick={() => setEditing(p)} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
+                                  <button onClick={() => setConfirmDelete(p.id)} className="text-xs text-muted hover:text-loss">eliminar</button>
+                                </>
                               )}
-                              <button onClick={() => setAportando(p)} className="text-xs text-gain hover:underline mr-2">aporte</button>
-                              <button onClick={() => setEditing(p)} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
-                              <button onClick={() => handleDelete(p.id)} className="text-xs text-muted hover:text-loss">eliminar</button>
                             </td>
                           </tr>
                         ))}
