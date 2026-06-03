@@ -38,7 +38,6 @@ export default function Rentabilidad() {
   // sin ese endpoint), las otras métricas igual se muestren.
   const refreshMetrics = useCallback(async (from, to) => {
     if (!from || !to) return;
-    setError(null);
     const safe = (p) => p.catch(() => null);
     const [r, t, m] = await Promise.all([
       safe(getRentabilidad({ from, to })),
