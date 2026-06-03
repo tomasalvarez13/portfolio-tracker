@@ -30,7 +30,14 @@ export default function Login() {
         setMode('login');
       }
     } catch (err) {
-      setError(err.message || 'Error de autenticación');
+      const msg = err.message || '';
+      if (msg.includes('Invalid login credentials')) {
+        setError('Email o contraseña incorrectos. Si tu cuenta es nueva, confirma tu correo primero.');
+      } else if (msg.includes('Email not confirmed')) {
+        setError('Debes confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.');
+      } else {
+        setError(msg || 'Error de autenticación');
+      }
     } finally {
       setBusy(false);
     }
