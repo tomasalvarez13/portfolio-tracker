@@ -13,6 +13,7 @@ import PositionForm from '../components/positions/PositionForm.jsx';
 import ManualPriceForm from '../components/positions/ManualPriceForm.jsx';
 import AporteForm from '../components/positions/AporteForm.jsx';
 import CartolaUpload from '../components/positions/CartolaUpload.jsx';
+import TutorialCarousel from '../components/positions/TutorialCarousel.jsx';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { usePersistedFetch } from '../hooks/usePersistedFetch.js';
 
@@ -20,6 +21,16 @@ export default function Posiciones() {
   const { user } = useAuth();
   const posHook  = usePersistedFetch(`positions_${user?.id}`, getPositions);
   const instHook = usePersistedFetch(`instruments_${user?.id}`, getInstruments);
+
+  // Tutorial: mostrar cuando no hay posiciones y no fue descartado
+  const tutorialKey = user?.id ? `tutorial_dismissed_${user.id}` : null;
+  const [tutorialDismissed, setTutorialDismissed] = useState(
+    () => tutorialKey ? localStorage.getItem(tutorialKey) === 'true' : false
+  );
+  function dismissTutorial() {
+    if (tutorialKey) localStorage.setItem(tutorialKey, 'true');
+    setTutorialDismissed(true);
+  }
 
   // mode: null | 'choose' | 'new' | 'aporte' | 'retiro' | 'cartola'
   const [mode, setMode]               = useState(null);
@@ -192,9 +203,14 @@ export default function Posiciones() {
       )}
 
       {positions.length === 0 ? (
-        <div className="card p-10 text-center text-muted">
-          No tienes posiciones. Crea la primera con "+ Nueva".
-        </div>
+        !tutorialDismissed
+          ? <TutorialCarousel onDismiss={dismissTutorial} />
+          : <div className="card p-10 text-center text-muted">
+              No tenés posiciones.{' '}
+              <button onClick={() => { closeAll(); setMode('choose'); }} className="text-accent hover:underline">
+                Agregá la primera
+              </button>.
+            </div>
       ) : (
         <div className="space-y-3">
           {visibleCats.map((cat) => {

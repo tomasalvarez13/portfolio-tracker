@@ -26,8 +26,15 @@ export default function CartolaUpload({ instruments, onDone, onCancel }) {
       const fd = new FormData();
       fd.append('file', file);
       const { proposals } = await parseCartola(fd);
+      // Filtrar filas con valor cero o vacío (no tiene sentido agregar $0)
+      const valid = proposals.filter(p => {
+        const units = Number(p.units ?? 0);
+        const clp   = Number(p.amount_clp ?? 0);
+        const usd   = Number(p.amount_usd ?? 0);
+        return units > 0 || clp > 0 || usd > 0;
+      });
       // Construir filas editables
-      setRows(proposals.map((p, i) => ({
+      setRows(valid.map((p, i) => ({
         ...p,
         _id:         i,
         _status:     'approved',  // 'approved' | 'rejected'
