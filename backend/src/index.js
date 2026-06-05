@@ -9,6 +9,7 @@ import instrumentsRouter from './routes/instruments.js';
 import positionsRouter from './routes/positions.js';
 import movementsRouter from './routes/movements.js';
 import pricesRouter from './routes/prices.js';
+import pricesCronRouter from './routes/pricesCron.js';
 import portfolioRouter from './routes/portfolio.js';
 import marketRouter from './routes/market.js';
 import adminRouter from './routes/admin.js';
@@ -29,6 +30,9 @@ app.use(cors({
 
 // Healthcheck público
 app.get('/api/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+// Endpoints del scraper externo (sin JWT, solo CRON_SECRET)
+app.use('/api/prices', pricesCronRouter);
 
 // Rutas protegidas (requieren JWT de Supabase)
 app.use('/api/instruments', requireAuth, instrumentsRouter);
