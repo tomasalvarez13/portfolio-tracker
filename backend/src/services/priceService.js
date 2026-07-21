@@ -108,19 +108,14 @@ export async function refreshAllPrices() {
           report.ok.push(label);
           break;
         }
-        case 'alpha_vantage': {
-          const { price, currency } = await fetchStockQuote(inst.ticker);
-          const args = currency === 'CLP'
-            ? { priceClp: price }
-            : { priceUsd: price };
-          await savePrice({ instrumentId: inst.id, date, ...args, source: 'alpha_vantage', usdClp });
-          report.ok.push(label);
-          await sleep(15000); // respetar rate limit (~5/min)
-          break;
-        }
         case 'yahoo_finance': {
-          const { price } = await fetchStockCl(inst.ticker);
-          await savePrice({ instrumentId: inst.id, date, priceClp: price, source: 'yahoo_finance', usdClp });
+          if (inst.type === 'stock_us') {
+            const { price } = await fetchStockQuote(inst.ticker);
+            await savePrice({ instrumentId: inst.id, date, priceUsd: price, source: 'yahoo_finance', usdClp });
+          } else {
+            const { price } = await fetchStockCl(inst.ticker);
+            await savePrice({ instrumentId: inst.id, date, priceClp: price, source: 'yahoo_finance', usdClp });
+          }
           report.ok.push(label);
           await sleep(1000); // Yahoo Finance no tiene rate limit estricto
           break;

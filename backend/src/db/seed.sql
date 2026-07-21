@@ -19,16 +19,16 @@
 -- 1. INSTRUMENTOS (GLOBAL)
 -- ----------------------------------------------------------------------------
 INSERT INTO instruments (name, alias, type, ticker, currency, api_source, external_id, meta) VALUES
-  -- Acciones / ETFs USA (Alpha Vantage) ---------------------------------------
-  ('Amazon.com Inc',                    NULL, 'stock_us', 'AMZN',  'USD', 'alpha_vantage', 'AMZN',  '{}'),
-  ('Global X Copper Miners ETF',        NULL, 'stock_us', 'COPX',  'USD', 'alpha_vantage', 'COPX',  '{}'),
-  ('iShares MSCI Chile ETF',            NULL, 'stock_us', 'ECH',   'USD', 'alpha_vantage', 'ECH',   '{}'),
-  ('Alphabet Inc (Google)',             NULL, 'stock_us', 'GOOGL', 'USD', 'alpha_vantage', 'GOOGL', '{}'),
-  ('iShares Latin America 40 ETF',      NULL, 'stock_us', 'ILF',   'USD', 'alpha_vantage', 'ILF',   '{}'),
-  ('Microsoft Corp',                    NULL, 'stock_us', 'MSFT',  'USD', 'alpha_vantage', 'MSFT',  '{}'),
-  ('SPDR S&P 500 ETF',                  NULL, 'stock_us', 'SPY',   'USD', 'alpha_vantage', 'SPY',   '{}'),
-  ('Sociedad Quimica y Minera (SQM)',   NULL, 'stock_us', 'SQM',   'USD', 'alpha_vantage', 'SQM',   '{}'),
-  ('Tesla Inc',                         NULL, 'stock_us', 'TSLA',  'USD', 'alpha_vantage', 'TSLA',  '{}'),
+  -- Acciones / ETFs USA (Yahoo Finance) ----------------------------------------
+  ('Amazon.com Inc',                    NULL, 'stock_us', 'AMZN',  'USD', 'yahoo_finance', 'AMZN',  '{}'),
+  ('Global X Copper Miners ETF',        NULL, 'stock_us', 'COPX',  'USD', 'yahoo_finance', 'COPX',  '{}'),
+  ('iShares MSCI Chile ETF',            NULL, 'stock_us', 'ECH',   'USD', 'yahoo_finance', 'ECH',   '{}'),
+  ('Alphabet Inc (Google)',             NULL, 'stock_us', 'GOOGL', 'USD', 'yahoo_finance', 'GOOGL', '{}'),
+  ('iShares Latin America 40 ETF',      NULL, 'stock_us', 'ILF',   'USD', 'yahoo_finance', 'ILF',   '{}'),
+  ('Microsoft Corp',                    NULL, 'stock_us', 'MSFT',  'USD', 'yahoo_finance', 'MSFT',  '{}'),
+  ('SPDR S&P 500 ETF',                  NULL, 'stock_us', 'SPY',   'USD', 'yahoo_finance', 'SPY',   '{}'),
+  ('Sociedad Quimica y Minera (SQM)',   NULL, 'stock_us', 'SQM',   'USD', 'yahoo_finance', 'SQM',   '{}'),
+  ('Tesla Inc',                         NULL, 'stock_us', 'TSLA',  'USD', 'yahoo_finance', 'TSLA',  '{}'),
 
   -- Crypto (CoinGecko) --------------------------------------------------------
   ('Bitcoin',                           NULL, 'crypto',   'BTC',   'USD', 'coingecko',     'bitcoin', '{}'),

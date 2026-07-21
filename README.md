@@ -22,7 +22,7 @@ frontend/   SPA React con 4 secciones (Resumen, Posiciones, Rentabilidad, Mercad
 |---|---|---|
 | Dólar observado | mindicador.cl | ✅ |
 | Bitcoin | CoinGecko | ✅ |
-| Acciones/ETF USA | Alpha Vantage | ✅ calce 100% |
+| Acciones/ETF USA | Yahoo Finance | ✅ |
 | Fondos Fintual | CMF (admin 76810627) | ✅ -0.001% |
 | APV PlanVital | Superintendencia de Pensiones | ✅ exacto |
 | FIP Venturance (Tronador, Sierra Nevada) | — (manual) | sin API pública |
@@ -38,7 +38,7 @@ frontend/   SPA React con 4 secciones (Resumen, Posiciones, Rentabilidad, Mercad
 ### 2. Backend
 ```bash
 cd backend
-cp .env.example .env     # completa SUPABASE_*, DATABASE_URL, ALPHA_VANTAGE_API_KEY
+cp .env.example .env     # completa SUPABASE_*, DATABASE_URL
 npm install
 npm run dev              # http://localhost:3001
 ```
