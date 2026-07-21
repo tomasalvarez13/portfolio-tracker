@@ -2,15 +2,20 @@
 // GET .../simple/price?ids=bitcoin&vs_currencies=usd,clp
 // Validado: $73,808 USD / $65.6M CLP.
 //
-// El endpoint público (sin API key) rate-limitea con 429 seguido. Reintentamos
-// con backoff exponencial antes de darlo por caído.
+// El endpoint público sin API key comparte cuota por IP (frecuente 429 en hosting
+// compartido como Render free tier). Con COINGECKO_API_KEY (plan Demo, gratis)
+// se usa cuota propia. Igual reintentamos con backoff ante 429/5xx.
 
 const BASE = 'https://api.coingecko.com/api/v3/simple/price';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function fetchWithRetry(url, { retries = 3, baseDelayMs = 1000 } = {}) {
+  const apiKey = process.env.COINGECKO_API_KEY;
+  const headers = { 'User-Agent': 'portfolio-tracker' };
+  if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
+
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, { headers: { 'User-Agent': 'portfolio-tracker' } });
+    const res = await fetch(url, { headers });
     if (res.ok) return res;
 
     const retriable = res.status === 429 || res.status >= 500;
