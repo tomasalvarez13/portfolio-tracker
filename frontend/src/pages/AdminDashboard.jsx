@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { getAdminUsers, getAdminStats, deleteAdminUser } from '../services/api';
+import { Navigate, useNavigate } from 'react-router-dom';
+import {
+  getAdminUsers, getAdminStats, deleteAdminUser,
+  getInvitations, createInvitation, deleteInvitation,
+} from '../services/api';
 import { formatDate } from '../utils/formatters';
-import { LogOut, Users, Activity, TrendingUp, Layers } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth.jsx';
+import { isDemo } from '../demo/mode.js';
+import { LogOut, Users, Activity, TrendingUp, Layers, MailPlus, Trash2 } from 'lucide-react';
 
 function StatCard({ label, value, Icon, color = 'text-accent' }) {
   return (
     <div className="card p-4 flex items-center gap-3">
-      <div className={`w-9 h-9 rounded-xl bg-bg-hover flex items-center justify-center shrink-0`}>
+      <div className="w-9 h-9 rounded-xl bg-bg-hover flex items-center justify-center shrink-0">
         <Icon size={16} className={color} />
       </div>
       <div>
@@ -19,35 +24,45 @@ function StatCard({ label, value, Icon, color = 'text-accent' }) {
 }
 
 export default function AdminDashboard() {
-  const [stats, setStats]     = useState(null);
-  const [users, setUsers]     = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError]     = useState(null);
-  const [confirmDelete, setConfirmDelete] = useState(null); // id del usuario a eliminar
-  const [deleting, setDeleting]       = useState(false);
-  const [search, setSearch]           = useState('');
-  const navigate              = useNavigate();
+  const { session, loading: authLoading, signOut } = useAuth();
+  const [stats, setStats]       = useState(null);
+  const [users, setUsers]       = useState([]);
+  const [invites, setInvites]   = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [denied, setDenied]     = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [search, setSearch]     = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newNote, setNewNote]   = useState('');
+  const [inviteErr, setInviteErr] = useState(null);
+  const [inviting, setInviting] = useState(false);
+  const navigate = useNavigate();
+
+  // El adapter del demo intercepta toda la API, así que acá no habría datos que
+  // mostrar: el panel es de la cuenta real o de nadie.
+  const demo = isDemo();
 
   async function loadData() {
-    const token = localStorage.getItem('admin_token');
-    if (!token) { navigate('/admin/login'); return; }
-    setLoading(true); setLoadError(null);
+    setLoading(true); setLoadError(null); setDenied(false);
     try {
-      const [s, u] = await Promise.all([getAdminStats(), getAdminUsers()]);
-      setStats(s); setUsers(u.users);
+      const [s, u, i] = await Promise.all([getAdminStats(), getAdminUsers(), getInvitations()]);
+      setStats(s); setUsers(u.users); setInvites(i.invitations);
     } catch (e) {
-      // Solo cerrar sesión si el token es inválido (401). En cualquier otro error
-      // (backend dormido, 500) mostramos el error y dejamos reintentar.
-      if (e.response?.status === 401) {
-        localStorage.removeItem('admin_token');
-        navigate('/admin/login');
-      } else {
-        setLoadError(e.response?.data?.error || e.message || 'Error al conectar con el servidor');
-      }
+      const status = e.response?.status;
+      // 401: sesión vencida → al login. 403: sesión válida sin rol admin.
+      if (status === 401) navigate('/admin/login');
+      else if (status === 403) setDenied(true);
+      else setLoadError(e.response?.data?.error || e.message || 'Error al conectar con el servidor');
     } finally { setLoading(false); }
   }
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    if (demo || authLoading) return;
+    if (!session) { navigate('/admin/login'); return; }
+    loadData();
+  }, [demo, authLoading, session]);
 
   async function handleDelete(id) {
     setDeleting(true);
@@ -60,14 +75,24 @@ export default function AdminDashboard() {
     } finally { setDeleting(false); }
   }
 
-  function handleLogout() {
-    localStorage.removeItem('admin_token');
-    navigate('/admin/login');
+  async function handleInvite(e) {
+    e.preventDefault();
+    setInviteErr(null); setInviting(true);
+    try {
+      await createInvitation({ email: newEmail.trim(), note: newNote.trim() || null });
+      setNewEmail(''); setNewNote('');
+      await loadData();
+    } catch (e) {
+      setInviteErr(e.response?.data?.error || e.message);
+    } finally { setInviting(false); }
   }
 
-  const filtered = users.filter(u =>
-    !search || u.email?.toLowerCase().includes(search.toLowerCase())
-  );
+  async function handleRevoke(id) {
+    try { await deleteInvitation(id); await loadData(); }
+    catch (e) { alert(e.response?.data?.error || e.message); }
+  }
+
+  const filtered = users.filter(u => !search || u.email?.toLowerCase().includes(search.toLowerCase()));
 
   const daysSince = (iso) => {
     if (!iso) return '—';
@@ -77,11 +102,27 @@ export default function AdminDashboard() {
     return `Hace ${d} días`;
   };
 
-  if (loading) return (
+  if (demo) return <Navigate to="/app/resumen" replace />;
+
+  if (authLoading || loading) return (
     <div className="min-h-screen grid place-items-center">
       <div className="text-center space-y-2">
         <div className="text-muted text-sm">Conectando con el servidor…</div>
         <div className="text-xs text-muted/60">(El backend puede tardar ~30s en despertar)</div>
+      </div>
+    </div>
+  );
+
+  if (denied) return (
+    <div className="min-h-screen grid place-items-center px-4">
+      <div className="text-center space-y-4 max-w-sm">
+        <div className="text-2xl">🔒</div>
+        <div className="text-sm font-medium">Tu cuenta no tiene permisos de administrador</div>
+        <p className="text-xs text-muted">
+          Pedí que te asignen el rol <code className="text-accent">admin</code> en la tabla <code>users</code>.
+        </p>
+        <button onClick={async () => { await signOut(); navigate('/admin/login'); }}
+          className="text-xs text-muted hover:text-gray-300">Cambiar de cuenta</button>
       </div>
     </div>
   );
@@ -98,38 +139,97 @@ export default function AdminDashboard() {
           className="px-5 py-2 bg-accent hover:bg-accent/90 text-white rounded-lg text-sm font-medium">
           Reintentar
         </button>
-        <button onClick={() => { localStorage.removeItem('admin_token'); navigate('/admin/login'); }}
-          className="block mx-auto text-xs text-muted hover:text-gray-300 mt-1">
-          Volver al login
-        </button>
       </div>
     </div>
   );
 
   return (
     <div className="min-h-screen bg-bg-base">
-      {/* Header */}
       <header className="border-b border-bg-border bg-bg-card px-6 py-4 flex items-center justify-between">
         <div>
           <h1 className="font-semibold">Panel de administración</h1>
-          <p className="text-xs text-muted">Portfolio Tracker</p>
+          <p className="text-xs text-muted">{session?.user?.email}</p>
         </div>
-        <button onClick={handleLogout}
+        <button onClick={async () => { await signOut(); navigate('/admin/login'); }}
           className="flex items-center gap-2 text-xs text-muted hover:text-loss px-3 py-2 rounded-lg hover:bg-bg-hover transition-colors">
           <LogOut size={14} /> Salir
         </button>
       </header>
 
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatCard label="Usuarios totales"     value={stats?.total_users ?? '—'}         Icon={Users}      />
-          <StatCard label="Activos últimos 30d"  value={stats?.active_users_30d ?? '—'}    Icon={Activity}   color="text-gain" />
-          <StatCard label="Con posiciones"        value={stats?.users_with_positions ?? '—'} Icon={Layers}    color="text-accent" />
-          <StatCard label="Movimientos totales"  value={stats?.total_movements ?? '—'}     Icon={TrendingUp} color="text-muted" />
+          <StatCard label="Usuarios totales"    value={stats?.total_users ?? '—'}           Icon={Users} />
+          <StatCard label="Activos últimos 30d" value={stats?.active_users_30d ?? '—'}      Icon={Activity}   color="text-gain" />
+          <StatCard label="Con posiciones"      value={stats?.users_with_positions ?? '—'}  Icon={Layers}     color="text-accent" />
+          <StatCard label="Movimientos totales" value={stats?.total_movements ?? '—'}       Icon={TrendingUp} color="text-muted" />
         </div>
 
-        {/* Tabla de usuarios */}
+        {/* Invitaciones */}
+        <div className="card overflow-hidden">
+          <div className="px-4 py-3 border-b border-bg-border">
+            <h2 className="font-medium text-sm">Invitaciones ({invites.length})</h2>
+            <p className="text-xs text-muted mt-0.5">
+              Solo estos correos pueden registrarse. Lo valida Supabase antes de crear la cuenta.
+            </p>
+          </div>
+
+          <form onSubmit={handleInvite} className="px-4 py-3 border-b border-bg-border flex gap-2 flex-wrap items-start">
+            <input type="email" required value={newEmail} onChange={e => setNewEmail(e.target.value)}
+              placeholder="correo@ejemplo.com"
+              className="flex-1 min-w-[200px] bg-bg-base border border-bg-border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent" />
+            <input value={newNote} onChange={e => setNewNote(e.target.value)}
+              placeholder="Nota (opcional)"
+              className="flex-1 min-w-[140px] bg-bg-base border border-bg-border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent" />
+            <button type="submit" disabled={inviting}
+              className="flex items-center gap-1.5 bg-accent hover:bg-accent/90 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 text-xs font-medium">
+              <MailPlus size={13} /> {inviting ? 'Invitando…' : 'Invitar'}
+            </button>
+            {inviteErr && <p className="w-full text-xs text-loss">{inviteErr}</p>}
+          </form>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[520px]">
+              <thead>
+                <tr className="text-left text-xs text-muted border-b border-bg-border">
+                  <th className="px-4 py-3 font-medium">Correo</th>
+                  <th className="px-4 py-3 font-medium">Nota</th>
+                  <th className="px-4 py-3 font-medium">Invitado</th>
+                  <th className="px-4 py-3 font-medium">Estado</th>
+                  <th className="px-4 py-3 font-medium text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invites.map(i => (
+                  <tr key={i.id} className="border-b border-bg-border/50 hover:bg-bg-hover/30">
+                    <td className="px-4 py-3 font-medium">{i.email}</td>
+                    <td className="px-4 py-3 text-xs text-muted">{i.note || '—'}</td>
+                    <td className="px-4 py-3 text-xs text-muted">{formatDate(i.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                        i.used_at ? 'bg-gain/15 text-gain' : 'bg-muted/15 text-muted'
+                      }`}>
+                        {i.used_at ? 'Registrado' : 'Pendiente'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button onClick={() => handleRevoke(i.id)} title="Revocar invitación"
+                        className="text-muted hover:text-loss transition-colors">
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {invites.length === 0 && (
+                  <tr><td colSpan={5} className="px-4 py-10 text-center text-muted">
+                    Sin invitaciones. Nadie puede registrarse todavía.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Usuarios */}
         <div className="card overflow-hidden">
           <div className="px-4 py-3 border-b border-bg-border flex items-center justify-between gap-3 flex-wrap">
             <h2 className="font-medium text-sm">Usuarios ({filtered.length})</h2>

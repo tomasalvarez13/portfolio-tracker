@@ -24,8 +24,11 @@ export default function Login() {
         const { error } = await signIn(email, password);
         if (error) throw error;
       } else {
-        const { error } = await signUp(email, password, name);
+        const { data, error } = await signUp(email, password, name);
         if (error) throw error;
+        // Con "Confirm email" desactivado en Supabase, signUp ya devuelve sesión:
+        // el <Navigate> de arriba se encarga y no hay nada que confirmar.
+        if (data?.session) return;
         setInfo('Cuenta creada. Revisa tu correo para confirmar y luego inicia sesión.');
         setMode('login');
       }
@@ -36,6 +39,8 @@ export default function Login() {
       } else if (msg.includes('Email not confirmed')) {
         setError('Debes confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.');
       } else {
+        // El hook de invitaciones rechaza con su propio mensaje (403); llega tal
+        // cual acá, así que se muestra sin traducir.
         setError(msg || 'Error de autenticación');
       }
     } finally {

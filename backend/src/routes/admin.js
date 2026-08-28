@@ -1,23 +1,14 @@
-// Panel de administración: auth propio + stats de usuarios.
-// NO usa el sistema de autenticación de Supabase — tiene su propia validación.
+// Panel de administración: stats de usuarios e invitaciones de registro.
+//
+// Se monta detrás de requireAuth + requireAdmin en index.js, así que llega con
+// un JWT de Supabase válido y rol 'admin' en public.users. Antes usaba un token
+// hardcodeado que estaba en el repo público, lo que dejaba estos endpoints
+// —incluido el borrado de usuarios— abiertos a cualquiera.
 import { Router } from 'express';
 import { query } from '../config/db.js';
 import { supabaseAdmin } from '../config/db.js';
 
 const router = Router();
-
-// Auth manejado en el frontend. El backend solo valida el token.
-const ADMIN_TOKEN = 'portfolio-admin-secure-v1';
-
-// Middleware de token (aplica a todas las rutas excepto /auth)
-function requireAdminToken(req, res, next) {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (token !== ADMIN_TOKEN) return res.status(401).json({ error: 'No autorizado' });
-  next();
-}
-
-// Todas las rutas requieren token
-router.use(requireAdminToken);
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 router.get('/users', async (req, res) => {
@@ -106,9 +97,15 @@ router.delete('/users/:id', async (req, res) => {
   const { id } = req.params;
   try {
     // Borrar datos del portafolio de la DB (en orden para respetar FKs)
+    // El email lo necesitamos antes de borrar la fila, para revocar la invitación.
+    const { rows: [u] } = await query('SELECT email FROM users WHERE id = $1', [id]);
+
     await query('DELETE FROM portfolio_snapshots WHERE user_id = $1', [id]);
     await query('DELETE FROM movements          WHERE user_id = $1', [id]);
     await query('DELETE FROM positions          WHERE user_id = $1', [id]);
+
+    // Sin esto podría volver a registrarse de inmediato con la misma invitación.
+    if (u?.email) await query('DELETE FROM invitations WHERE email = lower($1)', [u.email]);
 
     // Borrar el usuario de Supabase Auth
     const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
@@ -117,6 +114,67 @@ router.delete('/users/:id', async (req, res) => {
     res.status(204).end();
   } catch (e) {
     console.error('[admin/delete-user]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── INVITACIONES ──────────────────────────────────────────────────────────────
+// Solo los correos de esta tabla pueden registrarse. Lo hace cumplir el hook
+// "Before User Created" de Supabase (ver backend/src/db/invitations.sql), no el
+// frontend: el signup va del browser directo a Supabase y saltearía cualquier
+// chequeo en React.
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// GET /api/admin/invitations
+router.get('/invitations', async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT i.id, i.email, i.note, i.created_at, i.used_at,
+             u.id AS user_id
+      FROM invitations i
+      LEFT JOIN users u ON lower(u.email) = i.email
+      ORDER BY i.created_at DESC
+    `);
+    res.json({ invitations: rows });
+  } catch (e) {
+    console.error('[admin/invitations]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/invitations  { email, note? }
+router.post('/invitations', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const note  = req.body?.note ?? null;
+
+  if (!EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: 'Correo inválido' });
+  }
+
+  try {
+    const { rows } = await query(
+      `INSERT INTO invitations (email, note) VALUES ($1, $2)
+       ON CONFLICT (email) DO UPDATE SET note = COALESCE(EXCLUDED.note, invitations.note)
+       RETURNING *`,
+      [email, note]
+    );
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    console.error('[admin/invitations:post]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/admin/invitations/:id
+// Revoca la invitación. Si la persona ya se registró, su cuenta sigue viva:
+// para sacarla del todo hay que borrar el usuario.
+router.delete('/invitations/:id', async (req, res) => {
+  try {
+    const { rowCount } = await query('DELETE FROM invitations WHERE id = $1', [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: 'Invitación no encontrada' });
+    res.status(204).end();
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });

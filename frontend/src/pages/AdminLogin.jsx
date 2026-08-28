@@ -1,26 +1,33 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth.jsx';
 
-// Credenciales validadas en el frontend para evitar problemas de parsing.
-// El token se usa para autenticar las llamadas al backend.
-const ADMIN_EMAIL = 'admin@admin.com';
-const ADMIN_PASS  = 'admin123';
-const ADMIN_TOKEN = 'portfolio-admin-secure-v1';
-
+// Login del panel admin. Usa la cuenta normal de Supabase; el permiso lo decide
+// el rol 'admin' en public.users, que valida el backend. Antes las credenciales
+// estaban escritas en este archivo, en un repo público.
 export default function AdminLogin() {
-  const [email, setEmail]     = useState('');
+  const { session, signIn } = useAuth();
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError]     = useState(null);
-  const navigate              = useNavigate();
+  const [error, setError]       = useState(null);
+  const [busy, setBusy]         = useState(false);
+  const navigate                = useNavigate();
 
-  function handleSubmit(e) {
+  if (session) return <Navigate to="/admin" replace />;
+
+  async function handleSubmit(e) {
     e.preventDefault();
-    if (email.trim() === ADMIN_EMAIL && password === ADMIN_PASS) {
-      localStorage.setItem('admin_token', ADMIN_TOKEN);
+    setError(null); setBusy(true);
+    try {
+      const { error: err } = await signIn(email.trim(), password);
+      if (err) throw err;
       navigate('/admin');
-    } else {
-      setError('Credenciales incorrectas');
-    }
+    } catch (err) {
+      const msg = err.message || '';
+      setError(msg.includes('Invalid login credentials')
+        ? 'Email o contraseña incorrectos.'
+        : msg || 'Error de autenticación');
+    } finally { setBusy(false); }
   }
 
   return (
@@ -31,19 +38,19 @@ export default function AdminLogin() {
             <span className="text-accent text-lg">⚙</span>
           </div>
           <h1 className="text-lg font-semibold">Panel de administración</h1>
-          <p className="text-xs text-muted mt-1">Portfolio Tracker</p>
+          <p className="text-xs text-muted mt-1">Entrá con tu cuenta de administrador</p>
         </div>
         <form onSubmit={handleSubmit} className="card p-5 space-y-3">
           <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
-            placeholder="admin@admin.com"
+            placeholder="tu@correo.com" autoComplete="username"
             className="w-full bg-bg-base border border-bg-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
           <input type="password" required value={password} onChange={e => setPassword(e.target.value)}
-            placeholder="Contraseña"
+            placeholder="Contraseña" autoComplete="current-password"
             className="w-full bg-bg-base border border-bg-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
           {error && <p className="text-xs text-loss">{error}</p>}
-          <button type="submit"
-            className="w-full bg-accent hover:bg-accent/90 text-white rounded-lg py-2 text-sm font-medium">
-            Entrar
+          <button type="submit" disabled={busy}
+            className="w-full bg-accent hover:bg-accent/90 disabled:opacity-50 text-white rounded-lg py-2 text-sm font-medium">
+            {busy ? 'Entrando…' : 'Entrar'}
           </button>
         </form>
       </div>
