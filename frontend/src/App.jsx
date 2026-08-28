@@ -11,6 +11,8 @@ import Chat from './pages/Chat.jsx';
 import AdminLogin from './pages/AdminLogin.jsx';
 import AdminDashboard from './pages/AdminDashboard.jsx';
 import Landing from './pages/Landing.jsx';
+import Demo from './pages/Demo.jsx';
+import DemoBadge from './components/DemoBadge.jsx';
 
 function ProtectedRoute({ children }) {
   const { session, loading } = useAuth();
@@ -25,9 +27,13 @@ function ProtectedRoute({ children }) {
 
 export default function App() {
   return (
+    <>
+    <DemoBadge />
     <Routes>
       <Route path="/"      element={<Landing />} />
       <Route path="/login" element={<Login />} />
+      {/* Modo demo: prende el flag y reusa el mismo árbol /app/* */}
+      <Route path="/demo"  element={<Demo />} />
       <Route
         path="/app"
         element={
@@ -50,5 +56,6 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   );
 }
