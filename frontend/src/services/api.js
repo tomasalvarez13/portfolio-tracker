@@ -1,6 +1,8 @@
 // Instancia Axios + llamadas al backend. Inyecta el JWT de Supabase en cada request.
 import axios from 'axios';
 import { supabase } from '../lib/supabase';
+import { isDemo } from '../demo/mode.js';
+import demoAdapter from '../demo/adapter.js';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api',
@@ -8,6 +10,12 @@ const api = axios.create({
 
 // Adjuntar token de Supabase a cada request
 api.interceptors.request.use(async (config) => {
+  // En modo demo cortamos antes de la red: un adapter propio responde con datos
+  // sintéticos, y ni Supabase ni el backend se enteran de la request.
+  if (isDemo()) {
+    config.adapter = demoAdapter;
+    return config;
+  }
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token;
   if (token) config.headers.Authorization = `Bearer ${token}`;
