@@ -14,6 +14,7 @@
 import crypto from 'crypto';
 import { query, withTransaction } from '../config/db.js';
 import { setBalance, NO_CUSTODIAN } from './ledgerService.js';
+import { todayCL } from '../utils/dates.js';
 
 export const sha256 = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 
@@ -103,7 +104,7 @@ export async function confirmStatement({ userId, statementId, rows, date }) {
 
   const when = date || (stmt.statement_date
     ? new Date(stmt.statement_date).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10));
+    : todayCL());
 
   const custodianId = stmt.custodian_id ?? NO_CUSTODIAN;
 
