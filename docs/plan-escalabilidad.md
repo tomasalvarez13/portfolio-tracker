@@ -1,12 +1,22 @@
 # Plan de escalabilidad
 
-Estado: decisiones cerradas, Fase 1 en curso · Fecha: 2026-08-31
+Estado: **Fase 1 en producción. §3.3 implementada.** Siguiente: §3.1, la
+cartola. · Última actualización: 2026-08-31
 
-Una rama por fase, siempre saliendo de `main` actualizado:
-`feat/fase-1-fundaciones`, `feat/fase-2-cartola-cron`, `feat/fase-3-analytics`.
+| Fase | Estado | Rama |
+|---|---|---|
+| 1 — Fundaciones (ledger, custodios) | ✅ mergeada (PR #5, `2b8dc8f`), migración aplicada y verificada | `feat/fase-1-fundaciones` |
+| 3.3 — Snapshots set-based | ✅ implementada, falta aplicar migración 003 | `feat/fase-2-snapshots` |
+| 3.1 — Cartola → maestro | ⏭ siguiente | `feat/fase-2-cartola` |
+| 2a — Cron por cola | pendiente | `feat/fase-2a-cron` |
+| 2b — Cascada de fuentes | pendiente, postergable | `feat/fase-2b-fuentes` |
+| 3 — Vistas por custodio y activo | pendiente | `feat/fase-3-analytics` |
+
+Una rama por fase, siempre saliendo de `main` actualizado.
 
 La migración de la Fase 1 vive en
-`backend/src/db/migrations/002_fase1_fundaciones.sql`.
+`backend/src/db/migrations/002_fase1_fundaciones.sql`. Ya está aplicada: no hay
+que volver a correrla.
 
 Objetivo: que la app aguante muchos usuarios cargando activos arbitrarios, que
 los valores cuota se actualicen solos para cualquier activo que alguien haya
@@ -242,8 +252,9 @@ que `positions`. `custodians`: lectura para autenticados, escritura service role
 - [x] `demo/server.js`: endpoint `/custodians` (si no, el modo demo daba 404)
 - [x] `npm run verify:ledger` — 15 aserciones de integración, con guardia
       contra bases no locales
-- [ ] **Aplicar la migración en Supabase**
-- [ ] Verificar en Supabase que los totales del portafolio no se movieron
+- [x] Aplicar la migración en Supabase
+- [x] Verificar en Supabase que los totales del portafolio no se movieron
+- [x] Mergeada en `main` (PR #5, merge `2b8dc8f`) y desplegada
 
 #### Semántica de `supersede`
 
@@ -505,9 +516,22 @@ ON CONFLICT (user_id, date, custodian_id, instrument_id) DO UPDATE
       value_clp = EXCLUDED.value_clp, value_usd = EXCLUDED.value_usd;
 ```
 
-- [ ] `snapshotAllUsers` set-based sobre `position_snapshots`
-- [ ] `portfolio_snapshots` como agregación de `position_snapshots`
-- [ ] Rebuild de `positions` desde `transactions` (idempotente, por usuario)
+- [x] `writeSnapshots(date, userId?)`: una implementación set-based para el cron
+      y para las rutas. Round-trips de `3N+1` a **4 constantes**
+- [x] `portfolio_snapshots` como agregación de `position_snapshots`, así los
+      totales no pueden divergir del detalle
+- [x] `DELETE` de filas huérfanas del día (cerrar una posición y re-snapshotear
+      el mismo día dejaba la fila vieja y el total no cuadraba)
+- [x] Cero explícito para quien se queda sin posiciones pero tenía historia: si
+      no, el gráfico se corta en vez de bajar a cero
+- [x] Migración `003_indice_snapshots_por_fecha.sql`: en los índices de la 002
+      `date` nunca era columna líder, así que el barrido diario hacía seq scan
+      de toda la historia
+- [x] `npm run verify:snapshots` — 17 aserciones, compara el SQL contra la
+      valorización en JS que reemplaza
+- [ ] **Aplicar la migración 003 en Supabase**
+- [x] Rebuild de `positions` desde `transactions` (entregado en Fase 1:
+      `rebuild_positions_for_user()`)
 
 ---
 
@@ -706,16 +730,77 @@ Nota sobre la 1: el saldo absoluto obliga a que `rebuild_position()` tome el
 
 ## 7. Orden de ejecución
 
-Las fases son secuenciales: la 3 necesita el ledger y `position_snapshots` de la
-1, y los datos que llena la 2.
+Con la Fase 1 mergeada, el orden ya no depende solo de qué presiona más. Hay un
+factor que lo decide: **`position_snapshots` existe y está vacía, y nada la
+puebla todavía.**
 
-Dentro de la Fase 2, los tres bloques son independientes entre sí y se pueden
-paralelizar o cortar:
+Como decidimos no hacer backfill —reconstruir hacia atrás con las unidades de
+hoy daría números falsos para cualquier activo donde hubo aportes en el medio—
+cada día que pasa es un día de historia por activo que no se recupera nunca.
+Ninguna otra tarea del plan tiene esa propiedad: todas las demás cuestan lo
+mismo hoy que en un mes.
 
-- **3.2 / Fase 2a (cron por cola)** es el más urgente si el maestro va a crecer
-  rápido. Es el que hay que comerse igual para escalar.
-- **3.3 (snapshots set-based)** es el más urgente si van a entrar muchos usuarios.
-- **3.1 (cartola)** es el que desbloquea que el maestro crezca solo.
-- **3.2b / Fase 2b (cascada de fuentes)** va última: depende del calendario de
-  2a, y es la única de las cuatro que se puede postergar sin costo. Hasta que
-  exista, los activos sin fuente siguen andando en `manual`.
+De ahí el orden:
+
+### 1. §3.3 — Snapshots set-based ✅
+
+La única tarea que es urgente por dos razones a la vez:
+
+- **Arranca el reloj de la historia por activo.** Sin esto, las vistas de la
+  Fase 3 no tienen nada que graficar cuando lleguen.
+- **Arregla el peor cuello de botella de escala.** `snapshotAllUsers` itera
+  usuarios en JS con 2+ queries cada uno; es lo primero que revienta cuando
+  entren usuarios de verdad.
+
+Rama chica, ~1 día.
+
+### 2. §3.1 — Cartola → maestro ← siguiente
+
+Es la deuda más visible que dejó abierta la Fase 1: `CartolaUpload.jsx` sigue
+llamando `createPosition` fila por fila, así que funciona, pero **no pregunta el
+custodio** y todo cae en "Sin custodio" — justo en el flujo donde el custodio es
+más obvio, porque el documento lo emite un custodio. Y `statements` /
+`transactions.statement_id` ya están en el schema sin usarse.
+
+También es lo que desbloquea que el maestro crezca solo, que es la tesis de
+escalabilidad de todo esto.
+
+### 3. §3.2 / Fase 2a — Cron por cola, con calendario
+
+Necesario recién cuando el maestro empiece a crecer, y el maestro no puede
+crecer hasta que la cartola pueda crear activos. Por eso va **después** de la
+cartola, no antes — al revés de lo que decía la versión anterior de este plan.
+
+### 4. §3.2b / Fase 2b — Cascada de fuentes
+
+Postergable sin costo. Hasta que exista, los activos sin fuente siguen en
+`manual`, que es lo que ya se hace hoy.
+
+### 5. §4 / Fase 3 — Vistas por custodio y por activo
+
+Necesita profundidad en `position_snapshots`, así que gana con cada semana que
+pase desde el punto 1.
+
+---
+
+## 8. Pendientes sueltos
+
+Cosas que no son de ninguna fase pero conviene no perder:
+
+- **`backend/package-lock.json` está desincronizado con `package.json`.** El
+  lockfile todavía declara `yahoo-finance2` y su árbol (~983 líneas) pero
+  `package.json` ya no la lista, y nada del código la importa — solo queda
+  mencionada en un comentario de `services/fetchers/yahooChart.js:2`. `npm ci`
+  falla cuando están fuera de sync, así que si el deploy lo usa, está roto.
+  Se arregla con un `npm install` en `backend/`, en su propio commit.
+- **`movements_legacy` quedó en la base** como respaldo de la migración. No
+  borrarla hasta confiar en el ledger por algunas semanas.
+- **`instruments.canonical_id` y `custodians.canonical_id` no tienen UI.** Las
+  columnas están y los índices únicos impiden nuevos duplicados, pero fusionar
+  dos filas ya existentes hoy es SQL a mano. Vale la pena una herramienta admin
+  cuando aparezca el primer duplicado real.
+- **El bug de zona horaria sigue vivo.** `todayISO()` usa `new Date().toISOString()`
+  (UTC) mientras el cron corre en `America/Santiago`: un `/api/prices/refresh`
+  disparado a las 21:30 CLT escribe el precio con fecha de mañana. Está en el
+  checklist de la Fase 2a, pero es un arreglo de dos líneas que se puede
+  adelantar en cualquier momento.
