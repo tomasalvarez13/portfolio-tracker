@@ -7,6 +7,22 @@ import { Upload, FileText, Sparkles, Plus } from 'lucide-react';
 // cosa. Antes el backend asumía 'fondo_mutuo_cl' para todo lo que creaba, y así
 // entraron acciones tipadas como fondos —lo que además rompe el breakdown por
 // tipo del resumen.
+// Desde qué similitud se acepta el match sin que el usuario lo confirme.
+//
+// Medido contra 21 nombres reales de cartola: a 55% se auto-asignan los 21
+// correctos; a 70% quedan 3 afuera —"RISKY NORRIS SERIE A" (0.60),
+// "ALPHABET INC CLASS A" (0.65) y "SQM-B" (0.67)— que son justo el caso en que
+// la cartola escribe el nombre distinto al del maestro.
+//
+// Se eligió 70% igual porque los dos errores no cuestan lo mismo: asignar a
+// mano una fila es molesto, pero aceptar sin mirar una fila mal matcheada mete
+// el saldo en el activo equivocado. Bajarlo a 0.60 es cambiar este número.
+const UMBRAL_AUTO = 0.70;
+
+// Debajo de esto el candidato ni se sugiere: la lista igual lo muestra, pero
+// sin destacarlo, porque a esa altura es más ruido que ayuda.
+const UMBRAL_SUGERENCIA = 0.45;
+
 const TIPOS = [
   { v: 'stock_us',       l: 'Acción o ETF (EE.UU.)' },
   { v: 'stock_cl',       l: 'Acción (Chile)' },
@@ -85,7 +101,9 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
         // El mejor candidato viene preseleccionado, pero solo si es razonable:
         // por debajo de 0.4 es más honesto dejarlo sin asignar que sugerir algo
         // que el usuario podría aceptar sin mirar.
-        instrument_id: r.candidates?.[0]?.similarity >= 0.4 ? String(r.candidates[0].id) : '',
+        // Solo se auto-asigna por encima del umbral. Debajo queda sin asignar
+        // a propósito, para que la decisión sea explícita.
+        instrument_id: r.candidates?.[0]?.similarity >= UMBRAL_AUTO ? String(r.candidates[0].id) : '',
         _create: false,
         // Se propone según la moneda, pero lo confirma el usuario.
         _type: r.amount_usd != null ? 'stock_us' : 'fondo_mutuo_cl',
@@ -216,6 +234,12 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
   // ── Pantalla 2: revisión ────────────────────────────────────────────────────
   const listas = rows.filter((r) => r._status === 'approved' && (r.instrument_id || r._create)).length;
   const sinAsignar = rows.filter((r) => r._status === 'approved' && !r.instrument_id && !r._create).length;
+  const autoAsignadas = rows.filter((r) => r.candidates?.[0]?.similarity >= UMBRAL_AUTO).length;
+  // Las que no se asignaron solas pero tienen un candidato razonable: se pueden
+  // aceptar en bloque en vez de fila por fila.
+  const sugeridasSinAsignar = rows.filter((r) =>
+    r._status === 'approved' && !r.instrument_id && !r._create
+    && r.candidates?.[0]?.similarity >= UMBRAL_SUGERENCIA).length;
 
   return (
     <div className="card p-5 space-y-4">
@@ -225,6 +249,13 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
           Los saldos se guardan con la fecha de la cartola, no la de hoy. Reemplazan la posición que tengas
           en este custodio, no se suman a ella.
         </p>
+        {rows.length > 0 && (
+          <p className="text-xs text-muted mt-1.5">
+            <span className="text-gain">{autoAsignadas}</span> de {rows.length} se asignaron solas
+            (coincidencia sobre {Math.round(UMBRAL_AUTO * 100)}%).
+            {rows.length - autoAsignadas > 0 && ' El resto lo tenés que revisar vos.'}
+          </p>
+        )}
       </div>
 
       <div className="grid sm:grid-cols-2 gap-3">
@@ -273,15 +304,17 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
                         onChange={(e) => updateRow(row._id, { instrument_id: e.target.value })}
                         className="flex-1 bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs">
                         <option value="">Sin asignar…</option>
-                        {(row.candidates || []).map((c) => (
+                        {(row.candidates || []).map((c, i) => (
                           <option key={c.id} value={c.id}>
+                            {i === 0 && c.similarity >= UMBRAL_SUGERENCIA ? '★ ' : ''}
                             {c.name}{c.ticker ? ` (${c.ticker})` : ''} — {Math.round(c.similarity * 100)}%
                           </option>
                         ))}
                       </select>
-                      {elegido && elegido.similarity < 0.55 && (
-                        <span className="text-xs text-loss shrink-0" title="Coincidencia baja: verificá que sea el correcto">
-                          match dudoso
+                      {elegido && elegido.similarity < UMBRAL_AUTO && (
+                        <span className="text-xs text-loss shrink-0"
+                          title={`Coincidencia de ${Math.round(elegido.similarity * 100)}%: por debajo del ${Math.round(UMBRAL_AUTO * 100)}% no se asigna sola. Verificá que sea la correcta.`}>
+                          revisá este
                         </span>
                       )}
                     </div>
@@ -306,6 +339,19 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
           );
         })}
       </div>
+
+      {sugeridasSinAsignar > 0 && (
+        <button
+          onClick={() => setRows((rs) => rs.map((r) => (
+            r._status === 'approved' && !r.instrument_id && !r._create
+              && r.candidates?.[0]?.similarity >= UMBRAL_SUGERENCIA
+              ? { ...r, instrument_id: String(r.candidates[0].id) }
+              : r
+          )))}
+          className="text-xs text-accent hover:underline">
+          Aceptar las {sugeridasSinAsignar} sugerencias que quedaron bajo el {Math.round(UMBRAL_AUTO * 100)}%
+        </button>
+      )}
 
       {sinAsignar > 0 && (
         <p className="text-xs text-loss">
