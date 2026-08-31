@@ -1,7 +1,7 @@
 # Plan de escalabilidad
 
-Estado: **Fase 1, §3.3 y §3.1 en producción. §2a implementada.** Siguiente:
-§3.4, el mantenedor admin. · Última actualización: 2026-08-31
+Estado: **Fase 1, §3.3, §3.1 y §2a en producción. §3.4 implementada.**
+Siguiente: §2b (postergable) o la Fase 3. · Última actualización: 2026-08-31
 
 | Fase | Estado | Rama |
 |---|---|---|
@@ -9,8 +9,8 @@ Estado: **Fase 1, §3.3 y §3.1 en producción. §2a implementada.** Siguiente:
 | 3.3 — Snapshots set-based | ✅ implementada, falta aplicar migración 003 | `feat/fase-2-snapshots` |
 | 3.1 — Cartola → maestro | ✅ implementada, falta aplicar migración 004 | `feat/fase-2-cartola` |
 | 2a — Cron por cola | ✅ implementada, falta aplicar migración 005 | `feat/fase-2a-cron` |
-| 3.4 — Mantenedor admin | ⏭ siguiente | `feat/fase-2c-admin` |
-| 2b — Cascada de fuentes | pendiente, postergable | `feat/fase-2b-fuentes` |
+| 3.4 — Mantenedor admin | ✅ implementada, falta aplicar migración 006 | `feat/fase-2c-admin` |
+| 2b — Cascada de fuentes | ⏭ siguiente (postergable) | `feat/fase-2b-fuentes` |
 | 3 — Vistas por custodio y activo | pendiente | `feat/fase-3-analytics` |
 
 Una rama por fase, siempre saliendo de `main` actualizado.
@@ -596,16 +596,30 @@ Más lo que ya existe pero no tiene dónde verse: la cola del día por estado, l
 instrumentos que agotaron sus reintentos con su último error, y un botón para
 re-encolar un job puntual sin esperar a la corrida siguiente.
 
-- [ ] `requireAdmin` en `POST`/`PUT`/`DELETE` de `/api/instruments`
-- [ ] `DELETE` solo si el instrumento no tiene transacciones; si no, deprecar o fusionar
-- [ ] `GET /api/admin/instruments` con búsqueda, filtros y paginado
-- [ ] `PUT /api/admin/instruments/:id` para editar el maestro completo
-- [ ] `merge_custodians()` + endpoints de custodios en admin
-- [ ] Tabla `job_runs` escrita por `enqueue` y `run`
-- [ ] `GET /api/admin/cron/runs` y `GET /api/admin/cron/runs/:id`
-- [ ] `POST /api/admin/cron/jobs/:id/retry`
-- [ ] Panel: pestañas de Instrumentos, Custodios y Cron
-- [ ] La cola de `pending_mapping` pasa a ser un filtro de la tabla de instrumentos
+- [x] `requireAdmin` en `POST`/`PUT`/`DELETE` de `/api/instruments`
+- [x] `DELETE` solo si el instrumento no tiene transacciones ni posiciones; si
+      las tiene, responde 409 y sugiere fusionar o deprecar
+- [x] `GET /api/admin/instruments` con búsqueda por trigramas, filtros y paginado
+- [x] `PUT /api/admin/instruments/:id` para editar el maestro completo
+- [x] `merge_custodians()` + endpoints de custodios en admin
+- [x] Tabla `job_runs` escrita por `enqueue` y `runBatch`, con `last_run_id` en
+      los jobs para poder abrir una corrida y ver su detalle
+- [x] `GET /api/admin/cron/runs` y `GET /api/admin/cron/runs/:id`
+- [x] `POST /api/admin/cron/jobs/:id/retry`
+- [x] Panel: pestañas de Usuarios, Instrumentos, Custodios y Cron
+- [x] La cola de `pending_mapping` pasa a ser un filtro de la tabla de
+      instrumentos, con contador en la pestaña
+- [x] `npm run verify:admin` — 28 aserciones
+- [x] **Bug encontrado en producción con el panel:** un activo sin fuente de
+      precios valía CERO en silencio. `computePositions` entraba por la rama de
+      `units`, no encontraba precio y devolvía null, ignorando el `amount_*` que
+      la cartola sí había traído. Dos posiciones reales (US$ 518) desaparecían
+      del patrimonio sin que nada fallara. Ahora cae al monto declarado cuando
+      no hay precio, en `computePositions` y en `writeSnapshots`.
+- [x] El tipo de un activo creado desde cartola lo elige el usuario en
+      `CartolaUpload`, no un default del backend. El default fijo
+      `fondo_mutuo_cl` tipaba acciones como fondos y ensuciaba el breakdown.
+- [ ] **Aplicar `006_mantenedor_admin.sql` en Supabase**
 
 ### 3.3 Snapshots set-based
 
@@ -885,7 +899,7 @@ Necesario recién cuando el maestro empiece a crecer, y el maestro no puede
 crecer hasta que la cartola pueda crear activos. Por eso va **después** de la
 cartola, no antes — al revés de lo que decía la versión anterior de este plan.
 
-### 4. §3.4 — Mantenedor admin ← siguiente
+### 4. §3.4 — Mantenedor admin ✅
 
 Con §2a el cron genera estado —cola, reintentos, instrumentos agotados— que hoy
 solo se ve por SQL. Y el maestro ya puede crecer solo desde las cartolas (§3.1),
@@ -898,7 +912,7 @@ mostrarse.
 Arranca cerrando un agujero real: `/api/instruments` acepta escrituras de
 cualquier usuario autenticado, y su `DELETE` cascadea a las posiciones de todos.
 
-### 5. §3.2b / Fase 2b — Cascada de fuentes, postergable
+### 5. §3.2b / Fase 2b — Cascada de fuentes ← siguiente, y postergable
 
 Postergable sin costo. Hasta que exista, los activos sin fuente siguen en
 `manual`, que es lo que ya se hace hoy.
@@ -914,11 +928,9 @@ pase desde el punto 1.
 
 Cosas que no son de ninguna fase pero conviene no perder:
 
-- **`/api/instruments` acepta escrituras de cualquier usuario autenticado.**
-  Está montado con `requireAuth` sin `requireAdmin`, y su `DELETE` cascadea a
-  `prices`, `positions`, `transactions` y `position_snapshots`: un usuario puede
-  borrar un instrumento y llevarse el historial de todos. Se cierra en §3.4, y
-  es la razón de que esa fase vaya antes que §2b.
+- ~~`/api/instruments` abierto a cualquier usuario autenticado~~ — cerrado en §3.4.
+- **`instruments.canonical_id` y `custodians.canonical_id` ya tienen UI** (§3.4),
+  así que este pendiente queda resuelto.
 
 - **`backend/package-lock.json` está desincronizado con `package.json`.** El
   lockfile todavía declara `yahoo-finance2` y su árbol (~983 líneas) pero
@@ -928,8 +940,4 @@ Cosas que no son de ninguna fase pero conviene no perder:
   Se arregla con un `npm install` en `backend/`, en su propio commit.
 - **`movements_legacy` quedó en la base** como respaldo de la migración. No
   borrarla hasta confiar en el ledger por algunas semanas.
-- **`instruments.canonical_id` y `custodians.canonical_id` no tienen UI.** Las
-  columnas están y los índices únicos impiden nuevos duplicados, pero fusionar
-  dos filas ya existentes hoy es SQL a mano. Vale la pena una herramienta admin
-  cuando aparezca el primer duplicado real.
 - ~~El bug de zona horaria~~ — resuelto en §2a con `utils/dates.js`.

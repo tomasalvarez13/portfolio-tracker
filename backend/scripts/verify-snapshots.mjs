@@ -29,6 +29,9 @@ const { closePosition, setBalance } = await import('../src/services/ledgerServic
 
 const U = '11111111-1111-1111-1111-111111111111';
 const today = new Date().toISOString().slice(0, 10);
+// Sufijo por corrida: este script crea un instrumento descartable y si muere
+// antes de limpiarlo, la corrida siguiente chocaría con el índice único.
+const RUN = String(process.hrtime.bigint()).slice(-9);
 let fails = 0;
 const check = (name, got, want) => {
   const ok = String(got) === String(want);
@@ -36,6 +39,12 @@ const check = (name, got, want) => {
   console.log(`${ok ? '  ok  ' : ' FALLA'} ${name}: got=${got} want=${want}`);
 };
 const r2 = (n) => Math.round(Number(n) * 100) / 100;
+// Comparar plata al centavo entre dos sumatorias independientes es frágil: el
+// SQL suma valores guardados a 6 decimales y el JS suma doubles, y cuando el
+// total cae justo en un .xx5 la diferencia de ~1e-6 alcanza para que redondeen
+// a lados distintos. Lo que hay que exigir es que coincidan DENTRO de un
+// centavo, no que sean idénticos después de redondear.
+const cerca = (a, b, tol = 0.01) => Math.abs(Number(a) - Number(b)) <= tol;
 
 try {
   // Fixture propio: este script cierra posiciones y deja al usuario en cero, así
@@ -79,7 +88,7 @@ try {
   for (const p of js.positions) {
     const s = sqlMap.get(key(p));
     if (!s) { mismatches++; console.log(`    sin fila SQL para ${key(p)}`); continue; }
-    if (r2(s.value_clp) !== r2(p.value_clp) || r2(s.value_usd) !== r2(p.value_usd)) {
+    if (!cerca(s.value_clp, p.value_clp) || !cerca(s.value_usd, p.value_usd)) {
       mismatches++;
       console.log(`    ${p.name} @${p.custodian_name}: SQL ${r2(s.value_clp)}/${r2(s.value_usd)} vs JS ${r2(p.value_clp)}/${r2(p.value_usd)}`);
     }
@@ -91,10 +100,10 @@ try {
     `SELECT total_clp, total_usd, breakdown FROM portfolio_snapshots WHERE user_id=$1 AND date=$2`, [U, today]);
   const { rows: [sum] } = await query(
     `SELECT SUM(value_clp) clp, SUM(value_usd) usd FROM position_snapshots WHERE user_id=$1 AND date=$2`, [U, today]);
-  check('total_clp = suma del detalle', r2(tot.total_clp), r2(sum.clp));
-  check('total_usd = suma del detalle', r2(tot.total_usd), r2(sum.usd));
-  check('total_clp = total de computePositions', r2(tot.total_clp), r2(js.totalClp));
-  check('total_usd = total de computePositions', r2(tot.total_usd), r2(js.totalUsd));
+  check('total_clp = suma del detalle', cerca(tot.total_clp, sum.clp), true);
+  check('total_usd = suma del detalle', cerca(tot.total_usd, sum.usd), true);
+  check('total_clp = total de computePositions', cerca(tot.total_clp, js.totalClp), true);
+  check('total_usd = total de computePositions', cerca(tot.total_usd, js.totalUsd), true);
 
   console.log('\n— el breakdown por tipo mantiene el shape de antes');
   const bd = tot.breakdown;
@@ -107,7 +116,10 @@ try {
   check('mismos tipos', Object.keys(bd).sort().join(','), Object.keys(jsBd).sort().join(','));
   let bdBad = 0;
   for (const t of Object.keys(jsBd)) {
-    if (r2(bd[t]?.clp) !== r2(jsBd[t].clp) || r2(bd[t]?.usd) !== r2(jsBd[t].usd)) bdBad++;
+    if (!cerca(bd[t]?.clp, jsBd[t].clp) || !cerca(bd[t]?.usd, jsBd[t].usd)) {
+      bdBad++;
+      console.log(`    ${t}: SQL ${r2(bd[t]?.clp)}/${r2(bd[t]?.usd)} vs JS ${r2(jsBd[t].clp)}/${r2(jsBd[t].usd)}`);
+    }
   }
   check('tipos con monto distinto', bdBad, 0);
 
@@ -175,11 +187,56 @@ try {
   check('devuelve total_clp numérico', typeof single.total_clp, 'number');
   check('devuelve breakdown objeto', typeof single.breakdown, 'object');
 
+  console.log('\n— un activo SIN precio nunca cae a cero si trae monto');
+  // El caso real que apareció en producción: la cartola crea un activo
+  // pending_mapping (api_source manual, sin precio jamás) con units Y monto.
+  // computePositions entraba por la rama de units, no encontraba precio, y la
+  // posición valía CERO en silencio — dos posiciones se perdieron del
+  // patrimonio sin que nada fallara.
+  const sinPrecio = (await query(
+    `INSERT INTO instruments (name, type, currency, api_source, status, created_by)
+     VALUES ($1,'stock_us','USD','manual','pending_mapping',$2) RETURNING id`,
+    [`Sin precio ${RUN}`, U])).rows[0].id;
+  check('de verdad no tiene ningún precio', (await query(
+    'SELECT count(*) c FROM prices WHERE instrument_id=$1', [sinPrecio])).rows[0].c, 0);
+
+  await query(
+    `INSERT INTO transactions (user_id, custodian_id, instrument_id, date, kind, units, amount_usd, source)
+     VALUES ($1, 0, $2, $3, 'saldo', 1.06411967, 335.78, 'cartola')
+     ON CONFLICT (user_id, custodian_id, instrument_id, date) WHERE kind='saldo'
+     DO UPDATE SET units = EXCLUDED.units, amount_usd = EXCLUDED.amount_usd`,
+    [U, sinPrecio, today]);
+  await query('SELECT rebuild_position($1, 0, $2)', [U, sinPrecio]);
+
+  const cp2 = await computePositions(U);
+  const sinPrecioPos = cp2.positions.find((x) => x.instrument_id === sinPrecio);
+  check('la posición existe', !!sinPrecioPos, true);
+  check('NO vale cero', Number(sinPrecioPos.value_usd) > 0, true);
+  check('usa el monto de la cartola', r2(sinPrecioPos.value_usd), 335.78);
+
+  await writeSnapshots(today, U);
+  const { rows: [snapSinPrecio] } = await query(
+    `SELECT value_usd FROM position_snapshots
+     WHERE user_id=$1 AND date=$2 AND instrument_id=$3`, [U, today, sinPrecio]);
+  check('el snapshot tampoco la deja en cero', r2(snapSinPrecio.value_usd), 335.78);
+
+  // Y cuando SÍ hay precio, manda el precio, no el monto.
+  await query(`INSERT INTO prices (instrument_id, date, price_usd, price_clp, source)
+               VALUES ($1,$2,400,380000,'test')
+               ON CONFLICT (instrument_id, date) DO UPDATE SET price_usd=400`, [sinPrecio, today]);
+  const cp3 = await computePositions(U);
+  const conPrecio = cp3.positions.find((x) => x.instrument_id === sinPrecio);
+  check('con precio, valoriza por unidades', r2(conPrecio.value_usd), r2(1.06411967 * 400));
+
+  await query('DELETE FROM instruments WHERE id=$1', [sinPrecio]);
+
   console.log(fails === 0 ? '\n=== TODO OK ===' : `\n=== ${fails} FALLA(S) ===`);
 } catch (e) {
   console.error('\nERROR:', e.message, '\n', e.stack?.split('\n').slice(0,5).join('\n'));
   fails++;
 } finally {
+  try { await query(`DELETE FROM instruments WHERE name LIKE 'Sin precio %'`); }
+  catch (e) { console.error('(limpieza falló:', e.message, ')'); }
   await pool.end();
   process.exit(fails === 0 ? 0 : 1);
 }

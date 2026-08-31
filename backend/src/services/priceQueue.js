@@ -33,6 +33,33 @@ const BACKOFF_MIN = [5, 20, 60];
 // de GitHub Actions, el refresh manual desde la UI y el scraper externo.
 const LOCK_KEY = 918273645;
 
+// ─── Registro de ejecuciones ─────────────────────────────────────────────────
+//
+// price_fetch_jobs guarda el estado por (instrumento, fecha), pero los jobs se
+// reabren y se sobreescriben: mirando esa tabla no se puede reconstruir qué
+// pasó en una corrida puntual. job_runs guarda una fila por ejecución.
+
+async function abrirRun({ kind, trigger = 'api', date }) {
+  const { rows } = await query(
+    `INSERT INTO job_runs (kind, trigger, date) VALUES ($1,$2,$3) RETURNING id`,
+    [kind, trigger, date ?? null]
+  );
+  return rows[0].id;
+}
+
+async function cerrarRun(runId, campos) {
+  if (!runId) return;
+  await query(
+    `UPDATE job_runs
+     SET finished_at = NOW(), enqueued = $2, claimed = $3, ok = $4,
+         no_data = $5, failed = $6, pending_after = $7, error = $8, detail = $9
+     WHERE id = $1`,
+    [runId, campos.enqueued ?? null, campos.claimed ?? null, campos.ok ?? null,
+     campos.no_data ?? null, campos.failed ?? null, campos.pending_after ?? null,
+     campos.error ?? null, campos.detail ? JSON.stringify(campos.detail) : null]
+  );
+}
+
 /** Corre `fn` solo si nadie más tiene el lock. Devuelve null si estaba tomado. */
 export async function withPriceLock(fn) {
   const client = await pool.connect();
@@ -57,7 +84,9 @@ export async function withPriceLock(fn) {
  * que el cron viejo no hacía: cuando una fuente volvía después de estar caída,
  * pedía solo hoy y los días perdidos quedaban is_stale para siempre.
  */
-export async function enqueue({ date = todayCL(), lookbackDays = 15 } = {}) {
+export async function enqueue({ date = todayCL(), lookbackDays = 15, trigger = 'api' } = {}) {
+  const runId = await abrirRun({ kind: 'enqueue', trigger, date });
+  try {
   const { rows: instruments } = await query(
     `SELECT id, name, type, api_source
      FROM instruments
@@ -114,11 +143,17 @@ export async function enqueue({ date = todayCL(), lookbackDays = 15 } = {}) {
     [MAX_ATTEMPTS]
   );
 
-  return { date, instruments: instruments.length, created, skipped, recuperados, pending, muestra: fechas.slice(0, 10) };
+  const resultado = { run_id: runId, date, instruments: instruments.length, created, skipped, recuperados, pending, muestra: fechas.slice(0, 10) };
+  await cerrarRun(runId, { enqueued: created, pending_after: pending, detail: { skipped, recuperados, muestra: fechas.slice(0, 20) } });
+  return resultado;
+  } catch (e) {
+    await cerrarRun(runId, { error: String(e.message).slice(0, 500) });
+    throw e;
+  }
 }
 
 /** Toma hasta `limit` jobs y los marca running, sin pisarse con otros workers. */
-async function claim(limit) {
+async function claim(limit, runId) {
   const { rows } = await query(
     `WITH tomados AS (
        SELECT j.id
@@ -131,11 +166,11 @@ async function claim(limit) {
        FOR UPDATE SKIP LOCKED
      )
      UPDATE price_fetch_jobs j
-     SET status = 'running', locked_at = NOW(), updated_at = NOW()
+     SET status = 'running', locked_at = NOW(), updated_at = NOW(), last_run_id = $3
      FROM tomados t
      WHERE j.id = t.id
      RETURNING j.id, j.instrument_id, j.date, j.attempts`,
-    [limit, MAX_ATTEMPTS]
+    [limit, MAX_ATTEMPTS, runId ?? null]
   );
   if (rows.length === 0) return [];
 
@@ -214,9 +249,10 @@ async function pool_(tareas, n) {
  * Procesa un lote. Devuelve el resumen y cuántos jobs quedan pendientes, para
  * que el que llama sepa si tiene que volver.
  */
-export async function runBatch({ limit = 25 } = {}) {
-  const jobs = await claim(limit);
-  const report = { tomados: jobs.length, ok: 0, no_data: 0, failed: 0, pending: 0, detalle: [] };
+export async function runBatch({ limit = 25, trigger = 'api' } = {}) {
+  const runId = await abrirRun({ kind: 'run', trigger, date: todayCL() });
+  const jobs = await claim(limit, runId);
+  const report = { run_id: runId, tomados: jobs.length, ok: 0, no_data: 0, failed: 0, pending: 0, detalle: [] };
 
   if (jobs.length === 0) {
     const { rows: [{ pending }] } = await query(
@@ -226,6 +262,7 @@ export async function runBatch({ limit = 25 } = {}) {
       [MAX_ATTEMPTS]
     );
     report.pending = pending;
+    await cerrarRun(runId, { claimed: 0, ok: 0, no_data: 0, failed: 0, pending_after: pending });
     return report;
   }
 
@@ -291,7 +328,49 @@ export async function runBatch({ limit = 25 } = {}) {
   );
   report.pending = pending;
   report.detalle = report.detalle.slice(0, 20);
+  await cerrarRun(runId, {
+    claimed: jobs.length, ok: report.ok, no_data: report.no_data,
+    failed: report.failed, pending_after: pending, detail: { detalle: report.detalle },
+  });
   return report;
+}
+
+/** Últimas ejecuciones del cron. */
+export async function listRuns(limit = 40) {
+  const { rows } = await query(
+    `SELECT id, kind, trigger, date, started_at, finished_at,
+            enqueued, claimed, ok, no_data, failed, pending_after, error,
+            EXTRACT(EPOCH FROM (COALESCE(finished_at, NOW()) - started_at))::int AS duracion_s
+     FROM job_runs ORDER BY started_at DESC LIMIT $1`,
+    [limit]
+  );
+  return rows;
+}
+
+/** Una ejecución con los jobs que tocó. */
+export async function getRun(runId) {
+  const { rows: [run] } = await query('SELECT * FROM job_runs WHERE id = $1', [runId]);
+  if (!run) return null;
+  const { rows: jobs } = await query(
+    `SELECT j.id, i.name AS instrumento, i.api_source, j.date, j.status,
+            j.attempts, j.last_error, j.source_used
+     FROM price_fetch_jobs j JOIN instruments i ON i.id = j.instrument_id
+     WHERE j.last_run_id = $1 ORDER BY j.status, i.name`,
+    [runId]
+  );
+  return { run, jobs };
+}
+
+/** Reencola un job puntual, sin esperar la corrida siguiente. */
+export async function retryJob(jobId) {
+  const { rows } = await query(
+    `UPDATE price_fetch_jobs
+     SET status = 'pending', attempts = 0, next_retry_at = NULL,
+         locked_at = NULL, last_error = NULL, updated_at = NOW()
+     WHERE id = $1 RETURNING id, instrument_id, date, status`,
+    [jobId]
+  );
+  return rows[0] ?? null;
 }
 
 /** Estado de la cola, para el panel admin y para diagnosticar. */

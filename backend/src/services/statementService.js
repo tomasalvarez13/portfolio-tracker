@@ -131,7 +131,10 @@ export async function confirmStatement({ userId, statementId, rows, date }) {
            VALUES ($1, $2, $3, 'manual', 'pending_mapping', $4, $5)
            RETURNING id, name`,
           [name,
-           r.type || 'fondo_mutuo_cl',
+           // El tipo lo manda el frontend, que se lo pregunta al usuario. El
+           // fallback solo cubre clientes viejos: antes era 'fondo_mutuo_cl'
+           // fijo, y así entraron acciones tipadas como fondos.
+           r.type || (usd != null ? 'stock_us' : 'fondo_mutuo_cl'),
            usd != null ? 'USD' : 'CLP',
            userId,
            JSON.stringify({ origen: 'cartola', statement_id: statementId, texto_original: r.instrument_name })]

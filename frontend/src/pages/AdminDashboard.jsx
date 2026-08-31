@@ -4,12 +4,14 @@ import {
   getAdminUsers, getAdminStats, deleteAdminUser,
   getInvitations, createInvitation, deleteInvitation,
   getInviteRequests, approveInviteRequest, rejectInviteRequest,
-  getPendingInstruments, mapInstrument, mergeInstrument, searchInstruments,
+  getPendingInstruments,
 } from '../services/api';
 import { formatDate } from '../utils/formatters';
+import { InstrumentsPanel, CustodiansPanel } from '../components/admin/MaestroPanel.jsx';
+import CronPanel from '../components/admin/CronPanel.jsx';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { isDemo } from '../demo/mode.js';
-import { LogOut, Users, Activity, TrendingUp, Layers, MailPlus, Trash2, Check, X, Inbox, Package } from 'lucide-react';
+import { LogOut, Users, Activity, TrendingUp, Layers, MailPlus, Trash2, Check, X, Inbox, Package, Building2, Timer } from 'lucide-react';
 
 function StatCard({ label, value, Icon, color = 'text-accent' }) {
   return (
@@ -41,14 +43,11 @@ export default function AdminDashboard() {
   const [newNote, setNewNote]   = useState('');
   const [inviteErr, setInviteErr] = useState(null);
   const [inviting, setInviting] = useState(false);
-  // Cola de activos que entraron por cartola y no tienen fuente de precios.
-  const [pending, setPending]     = useState([]);
-  const [editing, setEditing]     = useState(null);  // id del activo abierto
-  const [form, setForm]           = useState({});
-  const [mergeQuery, setMergeQuery] = useState('');
-  const [mergeHits, setMergeHits]   = useState([]);
-  const [instrErr, setInstrErr]     = useState(null);
-  const [busyInstr, setBusyInstr]   = useState(false);
+  // Solo para el contador de la pestaña: el mantenedor vive en MaestroPanel.
+  const [pending, setPending] = useState([]);
+  // Las secciones de mantenedor son pesadas: se montan solo al entrar a su
+  // pestaña, así el panel de usuarios no arrastra sus queries.
+  const [tab, setTab] = useState('usuarios');
   const navigate = useNavigate();
 
   // El adapter del demo intercepta toda la API, así que acá no habría datos que
@@ -181,6 +180,31 @@ export default function AdminDashboard() {
         </button>
       </header>
 
+      {/* Pestañas del panel */}
+      <div className="max-w-5xl mx-auto px-4 pt-6">
+      <div className="flex gap-1 p-1 rounded-xl bg-bg-card border border-bg-border w-fit mb-6 flex-wrap">
+        {[
+          { key: 'usuarios',     label: 'Usuarios e invitaciones', icon: Users },
+          { key: 'instrumentos', label: 'Instrumentos',            icon: Package, badge: pending.length },
+          { key: 'custodios',    label: 'Custodios',               icon: Building2 },
+          { key: 'cron',         label: 'Cron',                    icon: Timer },
+        ].map(({ key, label, icon: Icon, badge }) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${
+              tab === key ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-gray-200'
+            }`}>
+            <Icon size={13} /> {label}
+            {badge > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-accent/20 text-accent text-[10px]">
+                {badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      </div>
+
+      {tab === 'usuarios' && (
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <StatCard label="Usuarios totales"    value={stats?.total_users ?? '—'}           Icon={Users} />
@@ -387,136 +411,16 @@ export default function AdminDashboard() {
             </table>
           </div>
         </div>
-
-        {/* ── Activos por mapear ───────────────────────────────────────────── */}
-        {/* Los que entraron por cartola y todavía no tienen fuente de precios.
-            Mientras están acá solo los ve quien los creó; al mapearlos pasan a
-            ser globales y el cron los toma al día siguiente. */}
-        <div className="card overflow-hidden">
-          <div className="px-5 py-4 border-b border-bg-border flex items-center gap-2">
-            <Package size={16} className="text-accent" />
-            <h3 className="font-medium">Activos por mapear</h3>
-            <span className="text-xs text-muted">
-              {pending.length === 0 ? 'nada pendiente' : `${pending.length} en cola`}
-            </span>
-          </div>
-
-          {instrErr && <p className="px-5 py-2 text-xs text-loss">{instrErr}</p>}
-
-          {pending.length === 0 ? (
-            <p className="px-5 py-8 text-center text-sm text-muted">
-              No hay activos esperando fuente de datos.
-            </p>
-          ) : (
-            <div className="divide-y divide-bg-border/60">
-              {pending.map((it) => (
-                <div key={it.id} className="px-5 py-3">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium">{it.name}</div>
-                      <div className="text-xs text-muted mt-0.5 flex flex-wrap gap-x-3">
-                        <span>{it.currency} · {it.type}</span>
-                        {it.created_by_email && <span>lo trajo {it.created_by_email}</span>}
-                        <span>{it.positions_count} posición(es), {it.tx_count} transacción(es)</span>
-                        {it.meta?.texto_original && <span className="italic">“{it.meta.texto_original}”</span>}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const abrir = editing !== it.id;
-                        setEditing(abrir ? it.id : null);
-                        setInstrErr(null); setMergeQuery(''); setMergeHits([]);
-                        setForm(abrir ? { type: it.type, currency: it.currency, api_source: '', external_id: '', ticker: '' } : {});
-                      }}
-                      className="text-xs text-accent hover:underline shrink-0">
-                      {editing === it.id ? 'cerrar' : 'resolver'}
-                    </button>
-                  </div>
-
-                  {editing === it.id && (
-                    <div className="mt-3 space-y-4 bg-bg-base/40 rounded-lg p-3">
-                      {/* Opción A: asignarle fuente de datos */}
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium">Asignarle fuente de precios</p>
-                        <div className="grid sm:grid-cols-3 gap-2">
-                          <select value={form.type || ''} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
-                            className="bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs">
-                            {['stock_us','stock_cl','crypto','fondo_mutuo_cl','afp'].map((t) => <option key={t} value={t}>{t}</option>)}
-                          </select>
-                          <select value={form.api_source || ''} onChange={(e) => setForm((f) => ({ ...f, api_source: e.target.value }))}
-                            className="bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs">
-                            <option value="">fuente…</option>
-                            {['yahoo_finance','coingecko','cmf','sp','manual'].map((t) => <option key={t} value={t}>{t}</option>)}
-                          </select>
-                          <select value={form.currency || ''} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
-                            className="bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs">
-                            {['CLP','USD'].map((t) => <option key={t} value={t}>{t}</option>)}
-                          </select>
-                          <input placeholder="ticker (opcional)" value={form.ticker || ''}
-                            onChange={(e) => setForm((f) => ({ ...f, ticker: e.target.value }))}
-                            className="bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs" />
-                          <input placeholder="external_id (código CMF, id CoinGecko…)" value={form.external_id || ''}
-                            onChange={(e) => setForm((f) => ({ ...f, external_id: e.target.value }))}
-                            className="sm:col-span-2 bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs" />
-                        </div>
-                        <button disabled={busyInstr || !form.api_source}
-                          onClick={async () => {
-                            setBusyInstr(true); setInstrErr(null);
-                            try {
-                              await mapInstrument(it.id, {
-                                type: form.type, currency: form.currency, api_source: form.api_source,
-                                ticker: form.ticker || null, external_id: form.external_id || null,
-                              });
-                              setEditing(null); await loadData();
-                            } catch (e) { setInstrErr(e.response?.data?.error || e.message); }
-                            finally { setBusyInstr(false); }
-                          }}
-                          className="px-3 py-1.5 rounded text-xs bg-accent hover:bg-accent/90 text-white disabled:opacity-50">
-                          Activar con esta fuente
-                        </button>
-                      </div>
-
-                      {/* Opción B: fusionarlo con uno que ya existe */}
-                      <div className="space-y-2 border-t border-bg-border pt-3">
-                        <p className="text-xs font-medium">O fusionarlo con un activo existente</p>
-                        <p className="text-xs text-muted">
-                          Repunta el ledger, suma la historia y reconstruye las posiciones. El original queda
-                          apuntando al canónico, no se borra.
-                        </p>
-                        <input placeholder="buscar en el maestro…" value={mergeQuery}
-                          onChange={async (e) => {
-                            const q = e.target.value; setMergeQuery(q);
-                            if (q.trim().length < 2) { setMergeHits([]); return; }
-                            try { setMergeHits((await searchInstruments(q)).instruments || []); } catch { setMergeHits([]); }
-                          }}
-                          className="w-full bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs" />
-                        {mergeHits.filter((h) => h.id !== it.id).map((h) => (
-                          <div key={h.id} className="flex items-center justify-between gap-2 text-xs px-2 py-1.5 rounded hover:bg-bg-hover">
-                            <span className="truncate">
-                              {h.name}{h.ticker ? ` (${h.ticker})` : ''}
-                              <span className="text-muted"> — {Math.round(h.similarity * 100)}%</span>
-                            </span>
-                            <button disabled={busyInstr}
-                              onClick={async () => {
-                                setBusyInstr(true); setInstrErr(null);
-                                try { await mergeInstrument(it.id, h.id); setEditing(null); await loadData(); }
-                                catch (e) { setInstrErr(e.response?.data?.error || e.message); }
-                                finally { setBusyInstr(false); }
-                              }}
-                              className="shrink-0 text-accent hover:underline disabled:opacity-50">
-                              fusionar acá
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
+      )}
+
+      {tab !== 'usuarios' && (
+        <div className="max-w-5xl mx-auto px-4 py-6">
+          {tab === 'instrumentos' && <InstrumentsPanel />}
+          {tab === 'custodios'    && <CustodiansPanel />}
+          {tab === 'cron'         && <CronPanel />}
+        </div>
+      )}
     </div>
   );
 }

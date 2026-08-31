@@ -3,6 +3,18 @@ import { uploadStatement, confirmStatement, updateStatement, createCustodian } f
 import { formatCLP, formatUSD, formatUnits } from '../../utils/formatters';
 import { Upload, FileText, Sparkles, Plus } from 'lucide-react';
 
+// El tipo lo elige quien sube la cartola: es el único que sabe qué es cada
+// cosa. Antes el backend asumía 'fondo_mutuo_cl' para todo lo que creaba, y así
+// entraron acciones tipadas como fondos —lo que además rompe el breakdown por
+// tipo del resumen.
+const TIPOS = [
+  { v: 'stock_us',       l: 'Acción o ETF (EE.UU.)' },
+  { v: 'stock_cl',       l: 'Acción (Chile)' },
+  { v: 'fondo_mutuo_cl', l: 'Fondo mutuo o de inversión' },
+  { v: 'crypto',         l: 'Criptomoneda' },
+  { v: 'afp',            l: 'AFP o APV' },
+];
+
 // Sube una cartola, muestra lo que la IA extrajo con los candidatos que el
 // backend encontró en el maestro, y confirma todo en un solo request.
 //
@@ -75,6 +87,8 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
         // que el usuario podría aceptar sin mirar.
         instrument_id: r.candidates?.[0]?.similarity >= 0.4 ? String(r.candidates[0].id) : '',
         _create: false,
+        // Se propone según la moneda, pero lo confirma el usuario.
+        _type: r.amount_usd != null ? 'stock_us' : 'fondo_mutuo_cl',
       })));
     } catch (e) {
       setError(e.response?.data?.error || e.message);
@@ -91,6 +105,7 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
         instrument_id:   r.instrument_id ? Number(r.instrument_id) : null,
         create_instrument: !r.instrument_id && r._create,
         instrument_name: r.instrument_name,
+        type:            r._type,
         units:      r.units,
         amount_clp: r.amount_clp,
         amount_usd: r.amount_usd,
@@ -242,9 +257,16 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
                   </div>
 
                   {row._create ? (
-                    <p className="text-xs text-accent flex items-center gap-1">
-                      <Plus size={12} /> Se va a crear como activo nuevo, sin fuente de precios todavía
-                    </p>
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-accent flex items-center gap-1">
+                        <Plus size={12} /> Se va a crear como activo nuevo, sin fuente de precios todavía
+                      </p>
+                      <select value={row._type}
+                        onChange={(e) => updateRow(row._id, { _type: e.target.value })}
+                        className="w-full bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs">
+                        {TIPOS.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
+                      </select>
+                    </div>
                   ) : (
                     <div className="flex items-center gap-2">
                       <select value={row.instrument_id}

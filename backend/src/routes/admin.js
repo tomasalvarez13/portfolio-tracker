@@ -7,6 +7,8 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
 import { supabaseAdmin } from '../config/db.js';
+import { listRuns, getRun, retryJob, queueStatus } from '../services/priceQueue.js';
+import { todayCL } from '../utils/dates.js';
 
 const router = Router();
 
@@ -337,6 +339,192 @@ router.get('/instruments/search', async (req, res) => {
   if (q.length < 2) return res.json({ instruments: [] });
   const { rows } = await query('SELECT * FROM match_instruments($1, NULL, 10)', [q]);
   res.json({ instruments: rows });
+});
+
+// ── MANTENEDOR DE INSTRUMENTOS ────────────────────────────────────────────────
+// La cola de pending_mapping de arriba pasa a ser un filtro de esta tabla.
+
+// GET /api/admin/instruments?q=&status=&type=&api_source=&limit=&offset=
+router.get('/instruments', async (req, res) => {
+  const { q, status, type, api_source } = req.query;
+  const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  const clauses = ['TRUE'];
+  const params = [];
+  if (status)     { params.push(status);     clauses.push(`i.status = $${params.length}`); }
+  if (type)       { params.push(type);       clauses.push(`i.type = $${params.length}`); }
+  if (api_source) { params.push(api_source); clauses.push(`i.api_source = $${params.length}`); }
+  // La búsqueda usa el mismo índice de trigramas que el matching de cartolas.
+  if (q && q.trim().length >= 2) {
+    params.push(q.trim());
+    clauses.push(`i.id IN (SELECT id FROM match_instruments($${params.length}, NULL, 200))`);
+  }
+
+  try {
+    const { rows } = await query(
+      `SELECT i.id, i.name, i.alias, i.type, i.ticker, i.currency, i.api_source,
+              i.external_id, i.status, i.fetch_enabled, i.canonical_id, i.meta,
+              i.created_at, u.email AS created_by_email,
+              lp.price_clp, lp.price_usd, lp.date AS price_date, lp.is_stale,
+              (SELECT count(DISTINCT p.user_id) FROM positions p WHERE p.instrument_id = i.id)::int AS holders,
+              (SELECT count(*) FROM transactions t WHERE t.instrument_id = i.id)::int AS tx_count,
+              can.name AS canonical_name
+       FROM instruments i
+       LEFT JOIN users u        ON u.id = i.created_by
+       LEFT JOIN latest_prices lp ON lp.instrument_id = i.id
+       LEFT JOIN instruments can ON can.id = i.canonical_id
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY (i.status = 'pending_mapping') DESC, i.name
+       LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+    const { rows: [{ total }] } = await query(
+      `SELECT count(*)::int AS total FROM instruments i WHERE ${clauses.join(' AND ')}`, params
+    );
+    res.json({ instruments: rows, total, limit, offset });
+  } catch (e) {
+    console.error('[admin/instruments]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/admin/instruments/:id  -> edición completa del maestro
+router.put('/instruments/:id', async (req, res) => {
+  const { name, alias, type, ticker, currency, api_source, external_id, meta, status, fetch_enabled } = req.body;
+
+  if (type && !VALID_TYPES.includes(type)) {
+    return res.status(400).json({ error: `type debe ser uno de: ${VALID_TYPES.join(', ')}` });
+  }
+  if (api_source && !VALID_SOURCES.includes(api_source)) {
+    return res.status(400).json({ error: `api_source debe ser uno de: ${VALID_SOURCES.join(', ')}` });
+  }
+  if (status && !['active','pending_mapping','deprecated'].includes(status)) {
+    return res.status(400).json({ error: 'status inválido' });
+  }
+
+  try {
+    const { rows } = await query(
+      `UPDATE instruments SET
+         name          = COALESCE($2, name),
+         alias         = $3,
+         type          = COALESCE($4, type),
+         ticker        = $5,
+         currency      = COALESCE($6, currency),
+         api_source    = COALESCE($7, api_source),
+         external_id   = $8,
+         meta          = COALESCE($9, meta),
+         status        = COALESCE($10, status),
+         fetch_enabled = COALESCE($11, fetch_enabled)
+       WHERE id = $1 RETURNING *`,
+      [req.params.id, name ?? null, alias ?? null, type ?? null, ticker ?? null,
+       currency ?? null, api_source ?? null, external_id ?? null,
+       meta ? JSON.stringify(meta) : null, status ?? null,
+       typeof fetch_enabled === 'boolean' ? fetch_enabled : null]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Instrumento no encontrado' });
+    res.json(rows[0]);
+  } catch (e) {
+    if (e.code === '23505') {
+      return res.status(409).json({
+        error: 'Ya existe otro instrumento con esa fuente o ticker. Fusionalos en vez de duplicarlos.',
+        detail: e.message,
+      });
+    }
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── MANTENEDOR DE CUSTODIOS ───────────────────────────────────────────────────
+
+// GET /api/admin/custodians
+router.get('/custodians', async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT c.id, c.slug, c.name, c.country, c.canonical_id, c.created_at,
+             u.email AS created_by_email,
+             can.name AS canonical_name,
+             (SELECT count(*) FROM positions p WHERE p.custodian_id = c.id)::int    AS positions_count,
+             (SELECT count(*) FROM transactions t WHERE t.custodian_id = c.id)::int AS tx_count,
+             (SELECT count(*) FROM statements s WHERE s.custodian_id = c.id)::int   AS statements_count
+      FROM custodians c
+      LEFT JOIN users u       ON u.id = c.created_by
+      LEFT JOIN custodians can ON can.id = c.canonical_id
+      ORDER BY (c.canonical_id IS NOT NULL), (c.id = 0) DESC, c.name
+    `);
+    res.json({ custodians: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/admin/custodians/:id
+router.put('/custodians/:id', async (req, res) => {
+  const name = req.body?.name != null ? String(req.body.name).trim() : null;
+  const country = req.body?.country != null ? String(req.body.country).trim().toUpperCase().slice(0, 2) : null;
+  if (name != null && (name.length < 2 || name.length > 80)) {
+    return res.status(400).json({ error: 'El nombre debe tener entre 2 y 80 caracteres' });
+  }
+  try {
+    const { rows } = await query(
+      `UPDATE custodians SET name = COALESCE($2, name), country = COALESCE($3, country)
+       WHERE id = $1 RETURNING *`,
+      [req.params.id, name, country]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Custodio no encontrado' });
+    res.json(rows[0]);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/custodians/:id/merge  { target_id }
+router.post('/custodians/:id/merge', async (req, res) => {
+  const targetId = Number(req.body?.target_id);
+  if (!targetId) return res.status(400).json({ error: 'target_id es obligatorio' });
+  try {
+    const { rows } = await query('SELECT * FROM merge_custodians($1, $2)', [req.params.id, targetId]);
+    res.json({ merged_into: targetId, ...rows[0] });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── EJECUCIONES DEL CRON ──────────────────────────────────────────────────────
+
+// GET /api/admin/cron/runs
+router.get('/cron/runs', async (req, res) => {
+  try {
+    const [runs, cola] = await Promise.all([
+      listRuns(Math.min(Number(req.query.limit) || 40, 200)),
+      queueStatus(req.query.date || todayCL()),
+    ]);
+    res.json({ runs, cola });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/cron/runs/:id  -> la corrida con los jobs que tocó
+router.get('/cron/runs/:id', async (req, res) => {
+  try {
+    const r = await getRun(req.params.id);
+    if (!r) return res.status(404).json({ error: 'Ejecución no encontrada' });
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/cron/jobs/:id/retry  -> reencolar sin esperar la corrida siguiente
+router.post('/cron/jobs/:id/retry', async (req, res) => {
+  try {
+    const j = await retryJob(req.params.id);
+    if (!j) return res.status(404).json({ error: 'Job no encontrado' });
+    res.json(j);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 export default router;
