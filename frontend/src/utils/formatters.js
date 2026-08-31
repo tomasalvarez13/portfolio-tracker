@@ -1,3 +1,5 @@
+import { isHidden, maskDigits } from './privacy.js';
+
 // Formateadores de moneda y porcentaje según las reglas del proyecto.
 //   CLP -> formato chileno:  $24.866.305
 //   USD -> formato americano: $24,866.31
@@ -13,7 +15,7 @@ export function formatCLP(value, { sign = false } = {}) {
     maximumFractionDigits: 0,
   }).format(Math.abs(n));
   const prefix = n < 0 ? '-' : sign ? '+' : '';
-  return `${prefix}${formatted}`;
+  return isHidden() ? maskDigits(`${prefix}${formatted}`) : `${prefix}${formatted}`;
 }
 
 /** USD con 2 decimales, formato americano. */
@@ -27,10 +29,14 @@ export function formatUSD(value, { sign = false } = {}) {
     maximumFractionDigits: 2,
   }).format(Math.abs(n));
   const prefix = n < 0 ? '-' : sign ? '+' : '';
-  return `${prefix}${formatted}`;
+  return isHidden() ? maskDigits(`${prefix}${formatted}`) : `${prefix}${formatted}`;
 }
 
-/** Porcentaje con 2 decimales y coma decimal (es-CL). Ej: 2,10% */
+/**
+ * Porcentaje con 2 decimales y coma decimal (es-CL). Ej: 2,10%
+ * El modo privado NO lo oculta: un % no revela patrimonio, y dejarlo visible
+ * mantiene la app útil con los montos tapados.
+ */
 export function formatPct(value, { sign = true } = {}) {
   if (value == null || Number.isNaN(value)) return '—';
   const n = Number(value);
@@ -45,10 +51,11 @@ export function formatPct(value, { sign = true } = {}) {
 /** Número genérico (unidades/cuotas) con hasta 4 decimales. */
 export function formatUnits(value) {
   if (value == null || Number.isNaN(value)) return '—';
-  return new Intl.NumberFormat('es-CL', {
+  const out = new Intl.NumberFormat('es-CL', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 4,
   }).format(Number(value));
+  return isHidden() ? maskDigits(out) : out;
 }
 
 /** Clase de color tailwind según signo (verde +, rojo -). */

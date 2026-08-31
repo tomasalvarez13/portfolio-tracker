@@ -1,5 +1,8 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth.jsx';
+import { usePrivacy } from './hooks/usePrivacy.js';
+import { initPrivacy } from './utils/privacy.js';
 import Layout from './components/layout/Layout.jsx';
 import Login from './pages/Login.jsx';
 import Posiciones from './pages/Posiciones.jsx';
@@ -26,6 +29,15 @@ function ProtectedRoute({ children }) {
 }
 
 export default function App() {
+  const { user } = useAuth();
+
+  // La suscripción va acá y no en el Layout: <Outlet/> devuelve el mismo objeto
+  // de elemento que se crea abajo, así que re-renderizar el Layout no alcanza —
+  // React se saltea el subárbol. Al re-renderizar App, los <Resumen/> y compañía
+  // se crean de nuevo y las páginas sí vuelven a formatear sus números.
+  usePrivacy();
+  useEffect(() => { initPrivacy(user?.id); }, [user?.id]);
+
   return (
     <>
     <DemoBadge />
