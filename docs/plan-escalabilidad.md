@@ -1,14 +1,14 @@
 # Plan de escalabilidad
 
-Estado: **Fase 1 en producción. §3.3 implementada.** Siguiente: §3.1, la
-cartola. · Última actualización: 2026-08-31
+Estado: **Fase 1 y §3.3 en producción. §3.1 implementada.** Siguiente: §2a, el
+cron por cola. · Última actualización: 2026-08-31
 
 | Fase | Estado | Rama |
 |---|---|---|
 | 1 — Fundaciones (ledger, custodios) | ✅ mergeada (PR #5, `2b8dc8f`), migración aplicada y verificada | `feat/fase-1-fundaciones` |
 | 3.3 — Snapshots set-based | ✅ implementada, falta aplicar migración 003 | `feat/fase-2-snapshots` |
-| 3.1 — Cartola → maestro | ⏭ siguiente | `feat/fase-2-cartola` |
-| 2a — Cron por cola | pendiente | `feat/fase-2a-cron` |
+| 3.1 — Cartola → maestro | ✅ implementada, falta aplicar migración 004 | `feat/fase-2-cartola` |
+| 2a — Cron por cola | ⏭ siguiente | `feat/fase-2a-cron` |
 | 2b — Cascada de fuentes | pendiente, postergable | `feat/fase-2b-fuentes` |
 | 3 — Vistas por custodio y activo | pendiente | `feat/fase-3-analytics` |
 
@@ -283,9 +283,22 @@ Archivos: `routes/ai.js`, `components/positions/CartolaUpload.jsx`.
 1. **Persistir la subida.** La cartola se guarda en `statements` con hash del
    archivo. Da idempotencia (resubir la misma no duplica), reprocesamiento y
    auditoría. Hoy no queda rastro del documento.
-2. **Matching en dos pasos.** `pg_trgm` sobre el maestro saca top-10 candidatos
-   por fila extraída; el modelo solo confirma cuál es. El prompt deja de crecer
-   con el maestro, y el costo por cartola queda plano.
+2. **Matching fuera del prompt.** Este punto decía "top-10 candidatos y el
+   modelo confirma". Al implementarlo quedó claro que el segundo llamado al
+   modelo no hace falta: si el prompt de extracción no lleva el maestro —solo
+   saca nombre, unidades y montos del documento— el matching se resuelve entero
+   en SQL con `match_instruments()`, y la UI muestra el mejor candidato
+   preseleccionado con las alternativas y su score. El usuario revisa fila por
+   fila igual. Sale más barato, es determinista, es auditable, y el prompt deja
+   de crecer con el maestro.
+
+   Dos detalles que costaron encontrar. `similarity()` sola no sirve porque
+   castiga la diferencia de largo: `SQM-B` contra `Sociedad Quimica y Minera
+   (SQM)` da 0.129 y queda fuera de cualquier umbral razonable, mientras
+   `word_similarity()` da 0.667. El score combina las dos y toma la mayor. Y el
+   `WHERE` tiene que usar los operadores `%` y `<%`: con `similarity(a,b) > x`
+   el índice GIN no se puede usar y es seq scan garantizado. Medido con 60.000
+   instrumentos: 3 ms, `BitmapOr` sobre dos `Bitmap Index Scan`.
 3. **Sin match → crea el activo.** Se inserta en `instruments` con
    `status='pending_mapping'`, `api_source='manual'`, `created_by=user`. El
    usuario lo trackea por monto igual, el activo **ya está en el maestro**, y
@@ -298,13 +311,18 @@ Archivos: `routes/ai.js`, `components/positions/CartolaUpload.jsx`.
    desde el browser, cada una disparando un `computeAndSaveSnapshot` completo
    (10 filas = 10 recálculos de todo el portafolio).
 
-- [ ] `POST /api/statements` (upload + parse, guarda `raw_parse`)
-- [ ] Extensión `pg_trgm` + índice GIN sobre `instruments.name`
-- [ ] Resolver de candidatos en SQL, prompt reducido a top-10 por fila
-- [ ] Alta de `pending_mapping` desde la cartola
-- [ ] `POST /api/statements/:id/confirm` → `transactions` en una transacción
-- [ ] Cola admin de activos `pending_mapping`
-- [ ] `CartolaUpload.jsx` contra los endpoints nuevos
+- [x] `POST /api/statements` (upload + parse, guarda `raw_parse` con hash)
+- [x] Extensión `pg_trgm` + columna generada `search_text` + índice GIN
+- [x] **El matching salió del prompt entero**, no solo se redujo
+- [x] Alta de `pending_mapping` desde la cartola
+- [x] `POST /api/statements/:id/confirm` → `transactions` en una transacción
+- [x] Cola admin de `pending_mapping`, con mapeo **y fusión**
+- [x] `merge_instruments()`: repunta el ledger, suma la historia y reconstruye
+- [x] `CartolaUpload.jsx`: custodio obligatorio, candidatos con score, alta de
+      activos nuevos, un solo confirm
+- [x] `demo/server.js`: endpoints de `/statements`
+- [x] `npm run verify:cartola` — 30 aserciones
+- [ ] **Aplicar `004_cartolas_y_matching.sql` en Supabase**
 
 ### 3.2 Fase 2a — Cron por cola, con calendario y reintentos
 
@@ -754,7 +772,7 @@ La única tarea que es urgente por dos razones a la vez:
 
 Rama chica, ~1 día.
 
-### 2. §3.1 — Cartola → maestro ← siguiente
+### 2. §3.1 — Cartola → maestro ✅
 
 Es la deuda más visible que dejó abierta la Fase 1: `CartolaUpload.jsx` sigue
 llamando `createPosition` fila por fila, así que funciona, pero **no pregunta el
@@ -765,7 +783,7 @@ más obvio, porque el documento lo emite un custodio. Y `statements` /
 También es lo que desbloquea que el maestro crezca solo, que es la tesis de
 escalabilidad de todo esto.
 
-### 3. §3.2 / Fase 2a — Cron por cola, con calendario
+### 3. §3.2 / Fase 2a — Cron por cola, con calendario ← siguiente
 
 Necesario recién cuando el maestro empiece a crecer, y el maestro no puede
 crecer hasta que la cartola pueda crear activos. Por eso va **después** de la

@@ -14,14 +14,18 @@
 
 import { query } from '../config/db.js';
 
+// Todas las funciones aceptan `q`, una función de query. Por defecto usan el
+// pool; confirmar una cartola les pasa la del cliente en transacción, para que
+// las N escrituras sean atómicas. Ver withTransaction() en config/db.js.
+
 /** Custodio centinela "sin custodio" (ver la migración). */
 export const NO_CUSTODIAN = 0;
 
 const KINDS_DELTA = ['aporte', 'retiro', 'compra', 'venta', 'ajuste'];
 
 /** Recalcula una fila de `positions` desde el ledger. */
-export async function rebuildPosition(userId, custodianId, instrumentId) {
-  await query('SELECT rebuild_position($1, $2, $3)', [userId, custodianId, instrumentId]);
+export async function rebuildPosition(userId, custodianId, instrumentId, q = query) {
+  await q('SELECT rebuild_position($1, $2, $3)', [userId, custodianId, instrumentId]);
 }
 
 /** Recalcula todas las posiciones de un usuario. Idempotente. */
@@ -54,12 +58,12 @@ export async function setBalance({
   userId, custodianId = NO_CUSTODIAN, instrumentId, date,
   units = null, amountClp = null, amountUsd = null,
   notes = null, source = 'manual', statementId = null,
-  supersede = false,
+  supersede = false, q = query,
 }) {
   if (!instrumentId) throw new Error('instrumentId es obligatorio para un saldo');
 
   if (supersede) {
-    await query(
+    await q(
       `DELETE FROM transactions
        WHERE user_id = $1 AND custodian_id = $2 AND instrument_id = $3
          AND date = $4 AND kind = 'saldo'`,
@@ -67,7 +71,7 @@ export async function setBalance({
     );
   }
 
-  const { rows } = await query(
+  const { rows } = await q(
     `INSERT INTO transactions
        (user_id, custodian_id, instrument_id, statement_id, date, kind,
         units, amount_clp, amount_usd, notes, source)
@@ -84,7 +88,7 @@ export async function setBalance({
      units, amountClp, amountUsd, notes, source]
   );
 
-  await rebuildPosition(userId, custodianId, instrumentId);
+  await rebuildPosition(userId, custodianId, instrumentId, q);
   return rows[0];
 }
 
@@ -95,13 +99,13 @@ export async function setBalance({
 export async function recordMovement({
   userId, custodianId = NO_CUSTODIAN, instrumentId = null, date, kind,
   units = null, price = null, amountClp = null, amountUsd = null,
-  notes = null, source = 'manual', statementId = null,
+  notes = null, source = 'manual', statementId = null, q = query,
 }) {
   if (!KINDS_DELTA.includes(kind)) {
     throw new Error(`kind inválido: ${kind}. Esperaba uno de ${KINDS_DELTA.join(', ')}`);
   }
 
-  const { rows } = await query(
+  const { rows } = await q(
     `INSERT INTO transactions
        (user_id, custodian_id, instrument_id, statement_id, date, kind,
         units, price, amount_clp, amount_usd, notes, source)
@@ -112,7 +116,7 @@ export async function recordMovement({
   );
 
   // Solo las transacciones con instrumento afectan una posición.
-  if (instrumentId) await rebuildPosition(userId, custodianId, instrumentId);
+  if (instrumentId) await rebuildPosition(userId, custodianId, instrumentId, q);
   return rows[0];
 }
 
@@ -121,14 +125,14 @@ export async function recordMovement({
  * `positions`, pero el historial queda intacto en el ledger — que es la razón
  * de tener un ledger.
  */
-export async function closePosition({ userId, custodianId, instrumentId, date, notes = null }) {
+export async function closePosition({ userId, custodianId, instrumentId, date, notes = null, q = query }) {
   // supersede: cerrar significa "acá no queda nada", así que también descarta
   // los deltas que se hayan cargado el mismo día antes del cierre.
   return setBalance({
     userId, custodianId, instrumentId, date,
     units: 0, amountClp: 0, amountUsd: 0,
     notes: notes ?? 'Posición cerrada',
-    supersede: true,
+    supersede: true, q,
   });
 }
 

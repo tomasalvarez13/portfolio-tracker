@@ -87,6 +87,22 @@ export const getInvitations   = ()      => api.get('/admin/invitations').then(r 
 export const createInvitation = (body)  => api.post('/admin/invitations', body).then(r => r.data);
 export const deleteInvitation = (id)    => api.delete(`/admin/invitations/${id}`);
 
+// --- Cartolas ---
+export const uploadStatement  = (formData) => api.post('/statements', formData, {
+  headers: { 'Content-Type': 'multipart/form-data' },
+}).then((r) => r.data);
+export const getStatements    = ()          => api.get('/statements').then((r) => r.data);
+export const getStatement     = (id)        => api.get(`/statements/${id}`).then((r) => r.data);
+export const updateStatement  = (id, body)  => api.put(`/statements/${id}`, body).then((r) => r.data);
+export const confirmStatement = (id, body)  => api.post(`/statements/${id}/confirm`, body).then((r) => r.data);
+export const deleteStatement  = (id)        => api.delete(`/statements/${id}`);
+
+// --- Admin: maestro de activos ---
+export const getPendingInstruments = ()        => api.get('/admin/instruments/pending').then((r) => r.data);
+export const mapInstrument   = (id, body)      => api.put(`/admin/instruments/${id}/map`, body).then((r) => r.data);
+export const mergeInstrument = (id, targetId)  => api.post(`/admin/instruments/${id}/merge`, { target_id: targetId }).then((r) => r.data);
+export const searchInstruments = (q)           => api.get('/admin/instruments/search', { params: { q } }).then((r) => r.data);
+
 // --- IA ---
 export const parseCartola   = (formData) => api.post('/ai/parse-cartola', formData, {
   headers: { 'Content-Type': 'multipart/form-data' },
