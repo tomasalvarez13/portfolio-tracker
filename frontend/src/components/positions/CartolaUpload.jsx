@@ -56,6 +56,8 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
   const [custodianId, setCustodianId] = useState('');
   const [statementDate, setStatementDate] = useState('');
   const [detected, setDetected]   = useState(null);
+  // Resalta el selector cuando se intentó guardar sin elegir custodio.
+  const [faltaCustodio, setFaltaCustodio] = useState(false);
 
   // Alta de custodio inline
   const [newCustodian, setNewCustodian] = useState(null);
@@ -101,10 +103,17 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
         // El mejor candidato viene preseleccionado, pero solo si es razonable:
         // por debajo de 0.4 es más honesto dejarlo sin asignar que sugerir algo
         // que el usuario podría aceptar sin mirar.
-        // Solo se auto-asigna por encima del umbral. Debajo queda sin asignar
-        // a propósito, para que la decisión sea explícita.
+        // Solo se auto-asigna por encima del umbral.
         instrument_id: r.candidates?.[0]?.similarity >= UMBRAL_AUTO ? String(r.candidates[0].id) : '',
-        _create: false,
+        // Debajo del umbral se propone crearlo: si el maestro no lo tiene, es
+        // lo único que se puede hacer, y antes esas filas se descartaban en
+        // silencio al confirmar.
+        //
+        // Ojo con el caso del medio: una fila con candidato razonable —entre el
+        // umbral de sugerencia y el de auto-asignación— viene marcada para
+        // crear, y si es el mismo activo eso lo DUPLICA en el maestro. Por eso
+        // la fila muestra una advertencia con el candidato a mano.
+        _create: !(r.candidates?.[0]?.similarity >= UMBRAL_AUTO),
         // Se propone según la moneda, pero lo confirma el usuario.
         _type: r.amount_usd != null ? 'stock_us' : 'fondo_mutuo_cl',
       })));
@@ -117,6 +126,15 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
 
   // ── Paso 2: confirmar ───────────────────────────────────────────────────────
   async function handleConfirm() {
+    // Antes el botón quedaba deshabilitado sin custodio, lo que no explica nada:
+    // se puede apretar y el error dice qué falta.
+    if (!custodianId) {
+      setError('Elegí el custodio de esta cartola antes de guardar. Sin eso los saldos entran como "Sin custodio" y después hay que moverlos uno por uno.');
+      setFaltaCustodio(true);
+      return;
+    }
+    setFaltaCustodio(false);
+
     const toSend = rows
       .filter((r) => r._status === 'approved' && (r.instrument_id || r._create))
       .map((r) => ({
@@ -158,8 +176,11 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
         )}
       </div>
       {newCustodian === null ? (
-        <select value={custodianId} onChange={(e) => setCustodianId(e.target.value)}
-          className="mt-1 w-full bg-bg-base border border-bg-border rounded-lg px-3 py-2 text-sm">
+        <select value={custodianId}
+          onChange={(e) => { setCustodianId(e.target.value); if (e.target.value) setFaltaCustodio(false); }}
+          className={`mt-1 w-full bg-bg-base border rounded-lg px-3 py-2 text-sm ${
+            faltaCustodio ? 'border-loss' : 'border-bg-border'
+          }`}>
           <option value="">Selecciona…</option>
           {localCustodians.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
@@ -292,6 +313,16 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
                       <p className="text-xs text-accent flex items-center gap-1">
                         <Plus size={12} /> Se va a crear como activo nuevo, sin fuente de precios todavía
                       </p>
+                      {row.candidates?.[0]?.similarity >= UMBRAL_SUGERENCIA && (
+                        <p className="text-xs text-loss">
+                          Ojo: <span className="text-gray-200">{row.candidates[0].name}</span> coincide un{' '}
+                          {Math.round(row.candidates[0].similarity * 100)}%. Si es el mismo activo,{' '}
+                          <button type="button"
+                            onClick={() => updateRow(row._id, { _create: false, instrument_id: String(row.candidates[0].id) })}
+                            className="text-accent hover:underline">usá ese</button>
+                          {' '}en vez de crear uno nuevo — si no, te queda duplicado en el maestro.
+                        </p>
+                      )}
                       <select value={row._type}
                         onChange={(e) => updateRow(row._id, { _type: e.target.value })}
                         className="w-full bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs">
@@ -359,12 +390,11 @@ export default function CartolaUpload({ custodians = [], onDone, onCancel }) {
           marcala como nueva, o rechazala. No se van a guardar.
         </p>
       )}
-      {!custodianId && <p className="text-xs text-loss">Elegí el custodio de esta cartola antes de confirmar.</p>}
       {error && <p className="text-xs text-loss">{error}</p>}
 
       <div className="flex gap-2 justify-end">
         <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-muted hover:bg-bg-hover">Cancelar</button>
-        <button onClick={handleConfirm} disabled={listas === 0 || saving || !custodianId}
+        <button onClick={handleConfirm} disabled={listas === 0 || saving}
           className="px-4 py-2 rounded-lg text-sm bg-accent hover:bg-accent/90 text-white disabled:opacity-50">
           {saving ? 'Guardando…' : `Confirmar ${listas} ${listas === 1 ? 'posición' : 'posiciones'}`}
         </button>
