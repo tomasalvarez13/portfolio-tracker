@@ -51,13 +51,17 @@ export async function computePositions(userId) {
     let valueClp = null;
     let valueUsd = null;
 
-    if (r.units != null) {
-      // Valorizar por unidades × precio
-      const pClp = r.price_clp != null ? Number(r.price_clp) : null;
-      const pUsd = r.price_usd != null ? Number(r.price_usd) : null;
+    const pClp = r.price_clp != null ? Number(r.price_clp) : null;
+    const pUsd = r.price_usd != null ? Number(r.price_usd) : null;
+
+    // Un activo sin fuente de precios —recién creado desde una cartola, por
+    // ejemplo— puede tener units pero ningún precio jamás. Antes esto era un
+    // `if (r.units != null)` sin salida: la posición valía CERO y desaparecía
+    // del patrimonio en silencio. Ahora, si hay units pero no hay precio, se
+    // cae al monto que declaró la cartola: estático, pero real.
+    if (r.units != null && (pClp != null || pUsd != null)) {
       if (pClp != null) valueClp = Number(r.units) * pClp;
       if (pUsd != null) valueUsd = Number(r.units) * pUsd;
-      // Completar la moneda faltante con el dólar
       if (valueClp == null && valueUsd != null && usdClp) valueClp = valueUsd * usdClp;
       if (valueUsd == null && valueClp != null && usdClp) valueUsd = valueClp / usdClp;
     } else if (r.amount_clp != null) {
@@ -148,14 +152,20 @@ const VALUED = `
          -- Una posición valorizada con un precio de carry-forward no tiene un
          -- valor "de ese día". Se marca para que el número se pueda señalar.
          COALESCE(lp.is_stale, FALSE) AS is_stale,
+         -- El COALESCE de units ya no alcanza: si el instrumento NUNCA tuvo
+         -- precio, las dos ramas dan NULL y la posición valía cero. La
+         -- condición exige que exista algún precio para valorizar por unidades;
+         -- si no, cae al monto declarado. Mismo criterio que computePositions.
          CASE
-           WHEN p.units      IS NOT NULL THEN COALESCE(p.units * lp.price_clp,
+           WHEN p.units IS NOT NULL AND (lp.price_clp IS NOT NULL OR lp.price_usd IS NOT NULL)
+                                         THEN COALESCE(p.units * lp.price_clp,
                                                        p.units * lp.price_usd * ${FX})
            WHEN p.amount_clp IS NOT NULL THEN p.amount_clp
            WHEN p.amount_usd IS NOT NULL THEN p.amount_usd * ${FX}
          END AS value_clp,
          CASE
-           WHEN p.units      IS NOT NULL THEN COALESCE(p.units * lp.price_usd,
+           WHEN p.units IS NOT NULL AND (lp.price_clp IS NOT NULL OR lp.price_usd IS NOT NULL)
+                                         THEN COALESCE(p.units * lp.price_usd,
                                                        p.units * lp.price_clp / ${FX})
            WHEN p.amount_usd IS NOT NULL THEN p.amount_usd
            WHEN p.amount_clp IS NOT NULL THEN p.amount_clp / ${FX}

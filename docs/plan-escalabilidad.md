@@ -610,6 +610,15 @@ re-encolar un job puntual sin esperar a la corrida siguiente.
 - [x] La cola de `pending_mapping` pasa a ser un filtro de la tabla de
       instrumentos, con contador en la pestaña
 - [x] `npm run verify:admin` — 28 aserciones
+- [x] **Bug encontrado en producción con el panel:** un activo sin fuente de
+      precios valía CERO en silencio. `computePositions` entraba por la rama de
+      `units`, no encontraba precio y devolvía null, ignorando el `amount_*` que
+      la cartola sí había traído. Dos posiciones reales (US$ 518) desaparecían
+      del patrimonio sin que nada fallara. Ahora cae al monto declarado cuando
+      no hay precio, en `computePositions` y en `writeSnapshots`.
+- [x] El tipo de un activo creado desde cartola lo elige el usuario en
+      `CartolaUpload`, no un default del backend. El default fijo
+      `fondo_mutuo_cl` tipaba acciones como fondos y ensuciaba el breakdown.
 - [ ] **Aplicar `006_mantenedor_admin.sql` en Supabase**
 
 ### 3.3 Snapshots set-based
