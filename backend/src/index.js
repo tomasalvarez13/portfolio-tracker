@@ -43,6 +43,10 @@ app.use('/api/prices', pricesCronRouter);
 app.use('/api/invite-requests', inviteRequestsRouter);
 
 // Rutas protegidas (requieren JWT de Supabase)
+// El maestro es global: lo lee cualquiera, lo escribe solo un admin. Hasta la
+// §3.4 esto estaba con requireAuth a secas, y como el DELETE cascadea a prices,
+// positions, transactions y position_snapshots, cualquier usuario podía borrar
+// un instrumento y llevarse el historial de todos los demás.
 app.use('/api/instruments', requireAuth, instrumentsRouter);
 app.use('/api/positions', requireAuth, positionsRouter);
 app.use('/api/custodians', requireAuth, custodiansRouter);

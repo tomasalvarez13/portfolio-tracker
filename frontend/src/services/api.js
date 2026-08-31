@@ -103,6 +103,16 @@ export const mapInstrument   = (id, body)      => api.put(`/admin/instruments/${
 export const mergeInstrument = (id, targetId)  => api.post(`/admin/instruments/${id}/merge`, { target_id: targetId }).then((r) => r.data);
 export const searchInstruments = (q)           => api.get('/admin/instruments/search', { params: { q } }).then((r) => r.data);
 
+// --- Admin: mantenedor ---
+export const adminGetInstruments  = (params) => api.get('/admin/instruments', { params }).then(r => r.data);
+export const adminUpdateInstrument = (id, body) => api.put(`/admin/instruments/${id}`, body).then(r => r.data);
+export const adminGetCustodians   = ()        => api.get('/admin/custodians').then(r => r.data);
+export const adminUpdateCustodian = (id, body) => api.put(`/admin/custodians/${id}`, body).then(r => r.data);
+export const adminMergeCustodian  = (id, targetId) => api.post(`/admin/custodians/${id}/merge`, { target_id: targetId }).then(r => r.data);
+export const adminGetCronRuns     = (params)  => api.get('/admin/cron/runs', { params }).then(r => r.data);
+export const adminGetCronRun      = (id)      => api.get(`/admin/cron/runs/${id}`).then(r => r.data);
+export const adminRetryJob        = (id)      => api.post(`/admin/cron/jobs/${id}/retry`).then(r => r.data);
+
 // --- IA ---
 export const parseCartola   = (formData) => api.post('/ai/parse-cartola', formData, {
   headers: { 'Content-Type': 'multipart/form-data' },
