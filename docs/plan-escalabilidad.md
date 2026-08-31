@@ -1,13 +1,13 @@
 # Plan de escalabilidad
 
-Estado: **Fase 1 mergeada y aplicada en producción.** Siguiente: §3.3, los
-snapshots set-based. · Última actualización: 2026-08-31
+Estado: **Fase 1 en producción. §3.3 implementada.** Siguiente: §3.1, la
+cartola. · Última actualización: 2026-08-31
 
 | Fase | Estado | Rama |
 |---|---|---|
 | 1 — Fundaciones (ledger, custodios) | ✅ mergeada (PR #5, `2b8dc8f`), migración aplicada y verificada | `feat/fase-1-fundaciones` |
-| 3.3 — Snapshots set-based | ⏭ siguiente | `feat/fase-2-snapshots` |
-| 3.1 — Cartola → maestro | pendiente | `feat/fase-2-cartola` |
+| 3.3 — Snapshots set-based | ✅ implementada, falta aplicar migración 003 | `feat/fase-2-snapshots` |
+| 3.1 — Cartola → maestro | ⏭ siguiente | `feat/fase-2-cartola` |
 | 2a — Cron por cola | pendiente | `feat/fase-2a-cron` |
 | 2b — Cascada de fuentes | pendiente, postergable | `feat/fase-2b-fuentes` |
 | 3 — Vistas por custodio y activo | pendiente | `feat/fase-3-analytics` |
@@ -516,8 +516,20 @@ ON CONFLICT (user_id, date, custodian_id, instrument_id) DO UPDATE
       value_clp = EXCLUDED.value_clp, value_usd = EXCLUDED.value_usd;
 ```
 
-- [ ] `snapshotAllUsers` set-based sobre `position_snapshots`
-- [ ] `portfolio_snapshots` como agregación de `position_snapshots`
+- [x] `writeSnapshots(date, userId?)`: una implementación set-based para el cron
+      y para las rutas. Round-trips de `3N+1` a **4 constantes**
+- [x] `portfolio_snapshots` como agregación de `position_snapshots`, así los
+      totales no pueden divergir del detalle
+- [x] `DELETE` de filas huérfanas del día (cerrar una posición y re-snapshotear
+      el mismo día dejaba la fila vieja y el total no cuadraba)
+- [x] Cero explícito para quien se queda sin posiciones pero tenía historia: si
+      no, el gráfico se corta en vez de bajar a cero
+- [x] Migración `003_indice_snapshots_por_fecha.sql`: en los índices de la 002
+      `date` nunca era columna líder, así que el barrido diario hacía seq scan
+      de toda la historia
+- [x] `npm run verify:snapshots` — 17 aserciones, compara el SQL contra la
+      valorización en JS que reemplaza
+- [ ] **Aplicar la migración 003 en Supabase**
 - [x] Rebuild de `positions` desde `transactions` (entregado en Fase 1:
       `rebuild_positions_for_user()`)
 
@@ -730,7 +742,7 @@ mismo hoy que en un mes.
 
 De ahí el orden:
 
-### 1. §3.3 — Snapshots set-based ← siguiente
+### 1. §3.3 — Snapshots set-based ✅
 
 La única tarea que es urgente por dos razones a la vez:
 
@@ -742,7 +754,7 @@ La única tarea que es urgente por dos razones a la vez:
 
 Rama chica, ~1 día.
 
-### 2. §3.1 — Cartola → maestro
+### 2. §3.1 — Cartola → maestro ← siguiente
 
 Es la deuda más visible que dejó abierta la Fase 1: `CartolaUpload.jsx` sigue
 llamando `createPosition` fila por fila, así que funciona, pero **no pregunta el

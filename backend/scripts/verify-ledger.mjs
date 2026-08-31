@@ -58,7 +58,11 @@ try {
   await setBalance({ userId: U, custodianId: fintual, instrumentId: spy, date: today, units: 55 });
   p = (await query('SELECT units FROM positions WHERE user_id=$1 AND custodian_id=$2 AND instrument_id=$3', [U, fintual, spy])).rows[0];
   check('units tras corregir', Number(p.units), 55);
-  const nSaldos = (await query("SELECT count(*) c FROM transactions WHERE user_id=$1 AND instrument_id=$2 AND kind='saldo'", [U, spy])).rows[0].c;
+  // Acotado al custodio de este test: otros scripts pueden tener saldos del
+  // mismo activo en otros custodios sobre la misma base.
+  const nSaldos = (await query(
+    "SELECT count(*) c FROM transactions WHERE user_id=$1 AND instrument_id=$2 AND custodian_id=$3 AND kind='saldo'",
+    [U, spy, fintual])).rows[0].c;
   check('un solo saldo en el ledger', nSaldos, 1);
 
   console.log('\n— recordMovement suma un delta CON instrument_id (el bug viejo)');
@@ -72,10 +76,24 @@ try {
   check('units tras el aporte', Number(p.units), 60);
 
   console.log('\n— mismo activo en dos custodios convive');
+  // Delta en vez de total absoluto: así el script no depende de qué otro test
+  // corrió antes sobre la misma base.
+  const antesRn = Number((await query(
+    'SELECT count(*) c FROM positions WHERE user_id=$1 AND instrument_id=$2 AND custodian_id IN ($3,$4)',
+    [U, rn, banchile, fintual])).rows[0].c);
   await setBalance({ userId: U, custodianId: banchile, instrumentId: rn, date: today, units: 111 });
   await setBalance({ userId: U, custodianId: fintual,  instrumentId: rn, date: today, units: 222 });
-  const dos = (await query('SELECT count(*) c FROM positions WHERE user_id=$1 AND instrument_id=$2', [U, rn])).rows[0].c;
-  check('filas del mismo activo', dos, 3); // banchile + fintual + sin-custodio (del seed)
+  const dos = Number((await query(
+    'SELECT count(*) c FROM positions WHERE user_id=$1 AND instrument_id=$2 AND custodian_id IN ($3,$4)',
+    [U, rn, banchile, fintual])).rows[0].c);
+  check('el mismo activo vive en los dos custodios', dos, 2);
+  check('unidades en banchile', Number((await query(
+    'SELECT units FROM positions WHERE user_id=$1 AND instrument_id=$2 AND custodian_id=$3',
+    [U, rn, banchile])).rows[0].units), 111);
+  check('unidades en fintual', Number((await query(
+    'SELECT units FROM positions WHERE user_id=$1 AND instrument_id=$2 AND custodian_id=$3',
+    [U, rn, fintual])).rows[0].units), 222);
+  if (antesRn > 0) console.log(`    (ya existían ${antesRn} de esas filas antes del test)`);
 
   console.log('\n— computePositions expone el custodio');
   const cp = await computePositions(U);

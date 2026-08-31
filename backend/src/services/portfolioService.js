@@ -124,47 +124,160 @@ export async function computeBreakdown(userId) {
   return breakdown;
 }
 
+/* ───────────────────────── SNAPSHOTS ─────────────────────────
+ * Antes esto era un loop en JS: por cada usuario, computePositions() con 2+
+ * queries, y un INSERT. O(usuarios) round-trips en una sola request HTTP — el
+ * primer cuello de botella que aparece al crecer.
+ *
+ * Ahora son cuatro statements que procesan a todos los usuarios de una, con la
+ * misma lógica de valorización que computePositions() pero en SQL. Se puede
+ * acotar a un usuario pasando userId, y ese es el único camino: una sola
+ * implementación para el cron y para las rutas.
+ * ───────────────────────────────────────────────────────────── */
+
+// El dólar más reciente, como subconsulta escalar. Si `exchange_rates` está
+// vacía da NULL, y la aritmética propaga NULL — igual que el `if (usdClp)` del
+// código viejo, que simplemente no convertía.
+const FX = `(SELECT usd_clp FROM exchange_rates ORDER BY date DESC LIMIT 1)`;
+
+// Réplica exacta del orden de precedencia de computePositions():
+// units × precio primero, después amount_clp, después amount_usd.
+const VALUED = `
+  SELECT p.user_id, p.custodian_id, p.instrument_id, p.units,
+         lp.price_clp,
+         CASE
+           WHEN p.units      IS NOT NULL THEN COALESCE(p.units * lp.price_clp,
+                                                       p.units * lp.price_usd * ${FX})
+           WHEN p.amount_clp IS NOT NULL THEN p.amount_clp
+           WHEN p.amount_usd IS NOT NULL THEN p.amount_usd * ${FX}
+         END AS value_clp,
+         CASE
+           WHEN p.units      IS NOT NULL THEN COALESCE(p.units * lp.price_usd,
+                                                       p.units * lp.price_clp / ${FX})
+           WHEN p.amount_usd IS NOT NULL THEN p.amount_usd
+           WHEN p.amount_clp IS NOT NULL THEN p.amount_clp / ${FX}
+         END AS value_usd
+  FROM positions p
+  LEFT JOIN latest_prices lp ON lp.instrument_id = p.instrument_id`;
+
 /**
- * Calcula y guarda el snapshot del patrimonio total del usuario para una fecha.
- * @returns {Promise<{date:string, total_clp:number, total_usd:number, breakdown:object}>}
+ * Escribe `position_snapshots` y `portfolio_snapshots` para una fecha.
+ * @param {string} date  'YYYY-MM-DD'
+ * @param {string|null} userId  null = todos los usuarios
+ * @returns {Promise<{date:string, users:number, positions:number}>}
  */
-export async function computeAndSaveSnapshot(userId, date = todayISO()) {
-  const { positions, totalClp, totalUsd } = await computePositions(userId);
+export async function writeSnapshots(date = todayISO(), userId = null) {
+  const scopePos  = userId ? 'WHERE p.user_id = $2'  : '';
+  const params    = userId ? [date, userId] : [date];
 
-  const breakdown = {};
-  for (const p of positions) {
-    if (!breakdown[p.type]) breakdown[p.type] = { clp: 0, usd: 0 };
-    breakdown[p.type].clp += p.value_clp || 0;
-    breakdown[p.type].usd += p.value_usd || 0;
-  }
+  // 1. Un snapshot por posición. Es la tabla que habilita las vistas por activo
+  //    y por custodio: `portfolio_snapshots` solo guarda totales y breakdown por
+  //    tipo, así que no permite reconstruir cuánto valía un activo puntual.
+  const { rowCount: nPositions } = await query(
+    `INSERT INTO position_snapshots
+       (user_id, date, custodian_id, instrument_id, units, price_clp, value_clp, value_usd)
+     SELECT v.user_id, $1, v.custodian_id, v.instrument_id, v.units,
+            v.price_clp, v.value_clp, v.value_usd
+     FROM (${VALUED} ${scopePos}) v
+     ON CONFLICT (user_id, date, custodian_id, instrument_id)
+     DO UPDATE SET units     = EXCLUDED.units,
+                   price_clp = EXCLUDED.price_clp,
+                   value_clp = EXCLUDED.value_clp,
+                   value_usd = EXCLUDED.value_usd`,
+    params
+  );
 
+  // 2. Limpiar las filas del día que ya no corresponden a ninguna posición.
+  //    Sin esto, cerrar una posición y volver a snapshotear el mismo día dejaría
+  //    la fila vieja adentro y el total no cuadraría con la suma.
   await query(
-    `INSERT INTO portfolio_snapshots (user_id, date, total_clp, total_usd, breakdown)
-     VALUES ($1, $2, $3, $4, $5)
+    `DELETE FROM position_snapshots ps
+     WHERE ps.date = $1
+       ${userId ? 'AND ps.user_id = $2' : ''}
+       AND NOT EXISTS (
+         SELECT 1 FROM positions p
+         WHERE p.user_id       = ps.user_id
+           AND p.custodian_id  = ps.custodian_id
+           AND p.instrument_id = ps.instrument_id
+       )`,
+    params
+  );
+
+  // 3. `portfolio_snapshots` pasa a ser una agregación de lo de arriba, no un
+  //    cálculo paralelo. Así los totales no pueden divergir del detalle.
+  const { rowCount: nUsers } = await query(
+    `WITH by_type AS (
+       SELECT ps.user_id, i.type,
+              SUM(ps.value_clp) AS clp,
+              SUM(ps.value_usd) AS usd
+       FROM position_snapshots ps
+       JOIN instruments i ON i.id = ps.instrument_id
+       WHERE ps.date = $1 ${userId ? 'AND ps.user_id = $2' : ''}
+       GROUP BY ps.user_id, i.type
+     )
+     INSERT INTO portfolio_snapshots (user_id, date, total_clp, total_usd, breakdown)
+     SELECT user_id, $1,
+            COALESCE(SUM(clp), 0),
+            COALESCE(SUM(usd), 0),
+            jsonb_object_agg(type, jsonb_build_object('clp', COALESCE(clp, 0),
+                                                      'usd', COALESCE(usd, 0)))
+     FROM by_type
+     GROUP BY user_id
      ON CONFLICT (user_id, date)
      DO UPDATE SET total_clp = EXCLUDED.total_clp,
                    total_usd = EXCLUDED.total_usd,
                    breakdown = EXCLUDED.breakdown`,
-    [userId, date, totalClp, totalUsd, JSON.stringify(breakdown)]
+    params
   );
 
-  return { date, total_clp: totalClp, total_usd: totalUsd, breakdown };
+  // 4. Quien se quedó sin posiciones pero ya tenía historia necesita un cero
+  //    explícito: si no, el gráfico se corta en vez de bajar a cero.
+  await query(
+    `INSERT INTO portfolio_snapshots (user_id, date, total_clp, total_usd, breakdown)
+     SELECT u.id, $1, 0, 0, '{}'::jsonb
+     FROM users u
+     WHERE ${userId ? 'u.id = $2' : 'TRUE'}
+       AND NOT EXISTS (SELECT 1 FROM positions p WHERE p.user_id = u.id)
+       AND EXISTS (SELECT 1 FROM portfolio_snapshots s
+                   WHERE s.user_id = u.id AND s.date < $1)
+     ON CONFLICT (user_id, date)
+     DO UPDATE SET total_clp = 0, total_usd = 0, breakdown = '{}'::jsonb`,
+    params
+  );
+
+  return { date, users: nUsers, positions: nPositions };
 }
 
-/** Genera snapshots del día para TODOS los usuarios (lo llama el cron). */
+/**
+ * Snapshot de un usuario. Mantiene la firma y el shape de retorno de antes
+ * porque lo usan las rutas de positions, movements y portfolio.
+ * @returns {Promise<{date:string, total_clp:number, total_usd:number, breakdown:object}>}
+ */
+export async function computeAndSaveSnapshot(userId, date = todayISO()) {
+  await writeSnapshots(date, userId);
+
+  const { rows } = await query(
+    `SELECT date, total_clp, total_usd, breakdown FROM portfolio_snapshots
+     WHERE user_id = $1 AND date = $2`,
+    [userId, date]
+  );
+
+  // Sin posiciones y sin historia previa no se escribe fila: no es un error.
+  if (!rows[0]) return { date, total_clp: 0, total_usd: 0, breakdown: {} };
+
+  return {
+    date: toISODate(rows[0].date),
+    total_clp: Number(rows[0].total_clp),
+    total_usd: Number(rows[0].total_usd),
+    breakdown: rows[0].breakdown,
+  };
+}
+
+/** Snapshots del día para TODOS los usuarios. Lo llama el cron. */
 export async function snapshotAllUsers(date = todayISO()) {
-  const { rows } = await query(`SELECT id FROM users`);
-  const results = [];
-  for (const u of rows) {
-    try {
-      const snap = await computeAndSaveSnapshot(u.id, date);
-      results.push({ user: u.id, ok: true, total_clp: snap.total_clp });
-    } catch (e) {
-      console.error(`[portfolioService] snapshot falló para ${u.id}: ${e.message}`);
-      results.push({ user: u.id, ok: false, error: e.message });
-    }
-  }
-  return results;
+  const r = await writeSnapshots(date);
+  console.log(`[portfolioService] snapshots ${r.date}: ${r.users} usuario(s), ${r.positions} posición(es)`);
+  return r;
 }
 
 /** Resumen del día: total actual + variación vs día anterior (desde snapshots). */
