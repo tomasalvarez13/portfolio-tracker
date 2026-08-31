@@ -60,8 +60,8 @@ app.post('/api/cron/prices', async (req, res) => {
   }
 });
 
-// Rutas admin (sistema de auth propio, NO usa Supabase JWT)
-app.use('/api/admin', adminRouter);
+// Rutas admin: JWT de Supabase + rol 'admin' en public.users.
+app.use('/api/admin', requireAuth, requireAdmin, adminRouter);
 
 // Handler de errores
 app.use((err, req, res, next) => {

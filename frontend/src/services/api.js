@@ -63,18 +63,17 @@ export const getTWR = (params) =>
 export const getMarket = () => api.get('/market').then((r) => r.data);
 
 // --- Admin ---
-const adminApi = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api',
-});
-adminApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem('admin_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-export const adminLogin      = (body) => adminApi.post('/admin/auth', body).then(r => r.data);
-export const getAdminUsers   = ()     => adminApi.get('/admin/users').then(r => r.data);
-export const getAdminStats   = ()     => adminApi.get('/admin/stats').then(r => r.data);
-export const deleteAdminUser = (id)   => adminApi.delete(`/admin/users/${id}`);
+// Usa la misma instancia que el resto: JWT de Supabase. El backend exige además
+// rol 'admin' en public.users. Antes había una instancia aparte con un token
+// hardcodeado que estaba en el repo público.
+export const getAdminUsers   = ()     => api.get('/admin/users').then(r => r.data);
+export const getAdminStats   = ()     => api.get('/admin/stats').then(r => r.data);
+export const deleteAdminUser = (id)   => api.delete(`/admin/users/${id}`);
+
+// --- Invitaciones de registro ---
+export const getInvitations   = ()      => api.get('/admin/invitations').then(r => r.data);
+export const createInvitation = (body)  => api.post('/admin/invitations', body).then(r => r.data);
+export const deleteInvitation = (id)    => api.delete(`/admin/invitations/${id}`);
 
 // --- IA ---
 export const parseCartola   = (formData) => api.post('/ai/parse-cartola', formData, {
