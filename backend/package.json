@@ -10,7 +10,8 @@
     "fetch:prices": "node src/jobs/dailyPriceFetch.js",
     "verify:ledger": "node scripts/verify-ledger.mjs",
     "verify:snapshots": "node scripts/verify-snapshots.mjs",
-    "verify:cartola": "node scripts/verify-cartola.mjs"
+    "verify:cartola": "node scripts/verify-cartola.mjs",
+    "verify:queue": "node scripts/verify-queue.mjs"
   },
   "engines": {
     "node": ">=20"

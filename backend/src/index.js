@@ -1,7 +1,6 @@
 // Entry point del backend Express.
 import express from 'express';
 import cors from 'cors';
-import cron from 'node-cron';
 import dotenv from 'dotenv';
 
 import { requireAuth, requireAdmin } from './config/auth.js';
@@ -17,7 +16,6 @@ import portfolioRouter from './routes/portfolio.js';
 import marketRouter from './routes/market.js';
 import adminRouter from './routes/admin.js';
 import aiRouter from './routes/ai.js';
-import { runDailyJob } from './jobs/dailyPriceFetch.js';
 
 dotenv.config();
 
@@ -84,20 +82,11 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`[server] Backend escuchando en :${PORT}`);
-
-  // Cron diario de precios
-  if (process.env.RUN_CRON !== 'false') {
-    const schedule = process.env.PRICE_CRON_SCHEDULE || '30 8 * * 1-5';
-    const tz = process.env.CRON_TIMEZONE || 'America/Santiago';
-    if (cron.validate(schedule)) {
-      cron.schedule(schedule, () => {
-        runDailyJob().catch((e) => console.error('[cron] fallo:', e.message));
-      }, { timezone: tz });
-      console.log(`[cron] Programado "${schedule}" (${tz})`);
-    } else {
-      console.warn(`[cron] PRICE_CRON_SCHEDULE inválido: "${schedule}", cron no programado`);
-    }
-  } else {
-    console.log('[cron] Desactivado (RUN_CRON=false)');
-  }
+  // El cron in-process se sacó a propósito. Render free duerme la instancia por
+  // inactividad, así que node-cron no dispara de forma confiable — y cuando la
+  // instancia despertaba podía correr en paralelo con el tick de GitHub Actions
+  // sobre los mismos precios. Ahora GitHub Actions es la única fuente, y el
+  // advisory lock de la cola cubre el caso de que igual se solapen.
+  //
+  // Para correrlo a mano: npm run fetch:prices
 });

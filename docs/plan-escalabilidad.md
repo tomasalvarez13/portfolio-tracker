@@ -1,15 +1,15 @@
 # Plan de escalabilidad
 
-Estado: **Fase 1 y §3.3 en producción. §3.1 implementada.** Siguiente: §2a, el
-cron por cola. · Última actualización: 2026-08-31
+Estado: **Fase 1, §3.3 y §3.1 en producción. §2a implementada.** Siguiente:
+§2b (postergable) o directo a la Fase 3. · Última actualización: 2026-08-31
 
 | Fase | Estado | Rama |
 |---|---|---|
 | 1 — Fundaciones (ledger, custodios) | ✅ mergeada (PR #5, `2b8dc8f`), migración aplicada y verificada | `feat/fase-1-fundaciones` |
 | 3.3 — Snapshots set-based | ✅ implementada, falta aplicar migración 003 | `feat/fase-2-snapshots` |
 | 3.1 — Cartola → maestro | ✅ implementada, falta aplicar migración 004 | `feat/fase-2-cartola` |
-| 2a — Cron por cola | ⏭ siguiente | `feat/fase-2a-cron` |
-| 2b — Cascada de fuentes | pendiente, postergable | `feat/fase-2b-fuentes` |
+| 2a — Cron por cola | ✅ implementada, falta aplicar migración 005 | `feat/fase-2a-cron` |
+| 2b — Cascada de fuentes | ⏭ siguiente (postergable) | `feat/fase-2b-fuentes` |
 | 3 — Vistas por custodio y activo | pendiente | `feat/fase-3-analytics` |
 
 Una rama por fase, siempre saliendo de `main` actualizado.
@@ -396,15 +396,32 @@ después saltando de golpe mete un pico artificial en un sub-período del TWR.
 Mientras los huecos no estén rellenos, el cálculo de rentabilidad debería
 **excluir** los tramos `is_stale`, no tratarlos como precio real.
 
-- [ ] Tabla `price_fetch_jobs` + índice
-- [ ] Endpoints `enqueue` y `run`, con advisory lock
-- [ ] Workflow de GH Actions en loop hasta `pending = 0`
-- [ ] Concurrencia y backoff por fuente
-- [ ] Sacar node-cron de `index.js`
-- [ ] Helper `todayCL()` y reemplazar todos los `todayISO()`
-- [ ] Calendario de mercado por tipo de instrumento
-- [ ] Fetch por rango cuando hay huecos
-- [ ] Excluir tramos `is_stale` del cálculo de rentabilidad
+- [x] Tabla `price_fetch_jobs` con estados `pending/running/done/no_data/failed`
+- [x] `claim()` con `FOR UPDATE SKIP LOCKED` y recuperación de jobs colgados
+- [x] Endpoints `enqueue`, `run` y `queue`, con `pg_try_advisory_lock`
+- [x] Workflow de GH Actions en loop hasta `pending = 0`, con resumen y aviso
+      de instrumentos agotados
+- [x] Concurrencia por fuente y backoff 5/20/60 min con tope de 4 intentos
+- [x] Sacar node-cron de `index.js`
+- [x] `utils/dates.js` con `todayCL()`; ningún archivo usa ya fechas en UTC
+- [x] `marketCalendar.js`: feriados, rezago por tipo, `lastExpectedDate()`
+- [x] `price_gaps()` + relleno de huecos hacia atrás en el `enqueue`
+- [x] ~~Excluir tramos `is_stale`~~ → **marcarlos** (ver abajo)
+- [x] `npm run verify:queue` — 45 aserciones, sin red
+- [ ] **Aplicar `005_cola_de_precios.sql` en Supabase**
+
+#### Por qué NO se excluyen los tramos `is_stale`
+
+Este ítem estaba mal planteado. Un carry-forward no borra rentabilidad, la
+**corre de día**: el retorno aparece cuando el precio real vuelve. Sacar esos
+tramos del TWR le quitaría retorno que sí existió, y el producto geométrico
+sobre el período completo da lo mismo con o sin ellos.
+
+El problema real no es el total, es la granularidad: un money market plano cinco
+días y después saltando muestra un pico artificial en la variación diaria y en
+el mes. La respuesta correcta es que el número se pueda **marcar**, no que se
+descarte. De ahí `position_snapshots.is_stale` y
+`portfolio_snapshots.stale_positions`, que `getSnapshots` ya expone.
 
 ### 3.2b Fase 2b — Cascada de fuentes con descubrimiento
 
@@ -783,13 +800,13 @@ más obvio, porque el documento lo emite un custodio. Y `statements` /
 También es lo que desbloquea que el maestro crezca solo, que es la tesis de
 escalabilidad de todo esto.
 
-### 3. §3.2 / Fase 2a — Cron por cola, con calendario ← siguiente
+### 3. §3.2 / Fase 2a — Cron por cola, con calendario ✅
 
 Necesario recién cuando el maestro empiece a crecer, y el maestro no puede
 crecer hasta que la cartola pueda crear activos. Por eso va **después** de la
 cartola, no antes — al revés de lo que decía la versión anterior de este plan.
 
-### 4. §3.2b / Fase 2b — Cascada de fuentes
+### 4. §3.2b / Fase 2b — Cascada de fuentes ← siguiente, y postergable
 
 Postergable sin costo. Hasta que exista, los activos sin fuente siguen en
 `manual`, que es lo que ya se hace hoy.
@@ -817,8 +834,4 @@ Cosas que no son de ninguna fase pero conviene no perder:
   columnas están y los índices únicos impiden nuevos duplicados, pero fusionar
   dos filas ya existentes hoy es SQL a mano. Vale la pena una herramienta admin
   cuando aparezca el primer duplicado real.
-- **El bug de zona horaria sigue vivo.** `todayISO()` usa `new Date().toISOString()`
-  (UTC) mientras el cron corre en `America/Santiago`: un `/api/prices/refresh`
-  disparado a las 21:30 CLT escribe el precio con fecha de mañana. Está en el
-  checklist de la Fase 2a, pero es un arreglo de dos líneas que se puede
-  adelantar en cualquier momento.
+- ~~El bug de zona horaria~~ — resuelto en §2a con `utils/dates.js`.

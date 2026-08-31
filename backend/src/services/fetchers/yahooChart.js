@@ -3,6 +3,8 @@
 // sesión, lo que evita el 429 "Failed to get crumb" que bloquea IPs de hosting
 // compartido como Render free tier.
 
+import { todayCL } from '../../utils/dates.js';
+
 const BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 
 /**
@@ -25,7 +27,7 @@ export async function fetchYahooChartPrice(symbol) {
   const price = meta?.regularMarketPrice;
   const date  = meta?.regularMarketTime
     ? new Date(meta.regularMarketTime * 1000).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
+    : todayCL();
 
   if (!Number.isFinite(price) || price <= 0) {
     throw new Error(`Yahoo Finance (chart): sin precio para ${symbol}`);

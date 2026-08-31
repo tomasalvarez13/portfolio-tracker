@@ -6,6 +6,7 @@ import { query } from '../config/db.js';
 import { computePositions } from '../services/portfolioService.js';
 import { parseCartolaFile } from '../services/cartolaParser.js';
 import { matchCandidates } from '../services/statementService.js';
+import { todayCL } from '../utils/dates.js';
 
 const router = Router();
 
@@ -164,7 +165,7 @@ router.post('/chat', async (req, res) => {
 
   try {
     const genAI = getClient();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayCL();
 
     // Contexto del portafolio
     let portfolioCtx = '';

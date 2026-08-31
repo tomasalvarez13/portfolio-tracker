@@ -8,10 +8,10 @@ import { computePositions, computeAndSaveSnapshot } from '../services/portfolioS
 import {
   NO_CUSTODIAN, setBalance, recordMovement, closePosition, resolvePosition,
 } from '../services/ledgerService.js';
+import { todayCL } from '../utils/dates.js';
 
 const router = Router();
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
 /** Refresca el snapshot del día para que el resumen refleje el cambio al toque. */
 async function refreshSnapshot(userId, date) {
@@ -35,7 +35,7 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Indica units, amount_clp o amount_usd' });
   }
 
-  const when = date || todayISO();
+  const when = date || todayCL();
   try {
     await setBalance({
       userId:       req.user.id,
@@ -68,7 +68,7 @@ router.put('/:id', async (req, res) => {
   const pos = await resolvePosition(req.user.id, req.params.id);
   if (!pos) return res.status(404).json({ error: 'Posición no encontrada' });
 
-  const when = date || todayISO();
+  const when = date || todayCL();
   try {
     await setBalance({
       userId:       req.user.id,
@@ -112,7 +112,7 @@ router.post('/:id/aporte', async (req, res) => {
   const pos = await resolvePosition(req.user.id, req.params.id);
   if (!pos) return res.status(404).json({ error: 'Posición no encontrada' });
 
-  const when = date || todayISO();
+  const when = date || todayCL();
 
   // El monto CLP del movimiento: si el delta ya viene en CLP lo usamos; si no,
   // el frontend manda su equivalente para que el historial de aportes cuadre.
@@ -149,7 +149,7 @@ router.delete('/:id', async (req, res) => {
   const pos = await resolvePosition(req.user.id, req.params.id);
   if (!pos) return res.status(404).json({ error: 'Posición no encontrada' });
 
-  const when = todayISO();
+  const when = todayCL();
   try {
     await closePosition({
       userId:       req.user.id,

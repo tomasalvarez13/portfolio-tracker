@@ -1,30 +1,151 @@
 name: Daily price refresh
 
+# El refresh dejó de ser una request única. Antes esto llamaba a
+# POST /api/cron/prices, que recorría todos los instrumentos de a uno con
+# sleep(1000) por acción, con --max-time 120: con ~17 instrumentos entraba justo,
+# con 200 el curl cortaba y el workflow quedaba rojo aunque el backend siguiera
+# trabajando.
+#
+# Ahora encola y después drena la cola en lotes chicos, cada uno respondiendo en
+# segundos. El tiempo total ya no está limitado por el timeout de una request.
+
 on:
   schedule:
     # 12:30 UTC = 08:30 Chile verano (UTC-4)
     # 13:30 UTC = 08:30 Chile invierno (UTC-3)
-    # Corre ambos para cubrir el cambio de horario
+    # Corre ambos para cubrir el cambio de horario; el segundo encuentra la cola
+    # vacía y termina de inmediato.
     - cron: '30 12 * * 1-5'
     - cron: '30 13 * * 1-5'
-  workflow_dispatch: # permite correrlo manualmente desde GitHub
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: 'Días hacia atrás para buscar huecos de precio'
+        required: false
+        default: '15'
+
+concurrency:
+  # Dos corridas simultáneas no se corrompen —hay un advisory lock en la base—
+  # pero la segunda no aportaría nada.
+  group: daily-prices
+  cancel-in-progress: false
 
 jobs:
   refresh-prices:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Wake up backend and refresh prices
+      - name: Encolar lo que falta
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          LOOKBACK: ${{ github.event.inputs.lookback_days || '15' }}
         run: |
-          echo "Despertando el backend y actualizando precios..."
-          RESPONSE=$(curl -s -o /tmp/response.json -w "%{http_code}" \
-            -X POST "${{ secrets.BACKEND_URL }}/api/cron/prices" \
-            -H "Content-Type: application/json" \
-            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
-            --max-time 120)
-          echo "HTTP status: $RESPONSE"
-          cat /tmp/response.json
-          if [ "$RESPONSE" != "200" ]; then
-            echo "Error: el backend respondió con $RESPONSE"
+          set -euo pipefail
+
+          # Render free duerme la instancia: el primer request la despierta y
+          # puede tardar bastante, así que este va con timeout generoso.
+          echo "Despertando el backend…"
+          for i in $(seq 1 10); do
+            if curl -sf --max-time 30 "$BACKEND_URL/api/health" > /dev/null; then
+              echo "backend despierto"
+              break
+            fi
+            echo "  intento $i sin respuesta, esperando…"
+            sleep 15
+          done
+
+          echo "Encolando…"
+          HTTP=$(curl -s -o /tmp/enqueue.json -w '%{http_code}' \
+            -X POST "$BACKEND_URL/api/prices/enqueue" \
+            -H 'Content-Type: application/json' \
+            -H "x-cron-secret: $CRON_SECRET" \
+            --max-time 180 \
+            -d "{\"lookback_days\": $LOOKBACK}")
+
+          cat /tmp/enqueue.json; echo
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::enqueue respondió $HTTP"
             exit 1
           fi
-          echo "Precios actualizados correctamente"
+
+      - name: Drenar la cola
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          TOTAL_OK=0; TOTAL_NODATA=0; TOTAL_FAILED=0
+
+          # 60 lotes de 25 = 1.500 jobs por corrida. Es el techo de seguridad
+          # para que un bug no deje el workflow girando media hora.
+          for i in $(seq 1 60); do
+            HTTP=$(curl -s -o /tmp/run.json -w '%{http_code}' \
+              -X POST "$BACKEND_URL/api/prices/run?limit=25" \
+              -H "x-cron-secret: $CRON_SECRET" \
+              --max-time 120)
+
+            if [ "$HTTP" = "409" ]; then
+              echo "otro worker tiene el lock, cortando"
+              break
+            fi
+            if [ "$HTTP" != "200" ]; then
+              echo "::error::run respondió $HTTP"
+              cat /tmp/run.json; echo
+              exit 1
+            fi
+
+            OK=$(jq -r '.ok'       /tmp/run.json)
+            ND=$(jq -r '.no_data'  /tmp/run.json)
+            FA=$(jq -r '.failed'   /tmp/run.json)
+            PEND=$(jq -r '.pending' /tmp/run.json)
+            TOMADOS=$(jq -r '.tomados' /tmp/run.json)
+
+            TOTAL_OK=$((TOTAL_OK + OK)); TOTAL_NODATA=$((TOTAL_NODATA + ND)); TOTAL_FAILED=$((TOTAL_FAILED + FA))
+            echo "lote $i: $TOMADOS tomados, $OK ok, $ND sin dato, $FA fallidos, $PEND pendientes"
+
+            if [ "$TOMADOS" = "0" ] || [ "$PEND" = "0" ]; then
+              echo "cola vacía"
+              break
+            fi
+          done
+
+          {
+            echo "### Refresh de precios"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Actualizados | $TOTAL_OK |"
+            echo "| Sin dato (feriado o rezago) | $TOTAL_NODATA |"
+            echo "| Fallidos | $TOTAL_FAILED |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Los fallidos no rompen el workflow: cada job tiene reintentos con
+          # backoff y se resuelve solo en la corrida siguiente. Lo que hay que
+          # mirar son los que agotaron los intentos, y eso lo reporta el paso
+          # de abajo.
+          echo "total: $TOTAL_OK ok, $TOTAL_NODATA sin dato, $TOTAL_FAILED fallidos"
+
+      - name: Avisar de los instrumentos agotados
+        if: always()
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          curl -s --max-time 60 "$BACKEND_URL/api/prices/queue" \
+            -H "x-cron-secret: $CRON_SECRET" -o /tmp/queue.json || exit 0
+
+          N=$(jq -r '.agotados | length' /tmp/queue.json)
+          if [ "$N" != "0" ]; then
+            echo "::warning::$N instrumento(s) agotaron sus reintentos"
+            jq -r '.agotados[] | "  - \(.name) @\(.date): \(.last_error)"' /tmp/queue.json
+            {
+              echo ""
+              echo "> [!WARNING]"
+              echo "> $N instrumento(s) agotaron sus reintentos y necesitan revisión."
+              jq -r '.agotados[] | "> - **\(.name)** @\(.date): `\(.last_error)`"' /tmp/queue.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "sin instrumentos agotados"
+          fi

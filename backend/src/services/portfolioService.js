@@ -2,8 +2,8 @@
 // resumen del día y cálculo de rentabilidad (total y sobre lo invertido).
 
 import { query } from '../config/db.js';
+import { todayCL } from '../utils/dates.js';
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
 // pg devuelve columnas DATE como objetos Date. Normaliza a 'YYYY-MM-DD'
 // usando componentes locales (evita corrimientos de día por timezone).
@@ -145,6 +145,9 @@ const FX = `(SELECT usd_clp FROM exchange_rates ORDER BY date DESC LIMIT 1)`;
 const VALUED = `
   SELECT p.user_id, p.custodian_id, p.instrument_id, p.units,
          lp.price_clp,
+         -- Una posición valorizada con un precio de carry-forward no tiene un
+         -- valor "de ese día". Se marca para que el número se pueda señalar.
+         COALESCE(lp.is_stale, FALSE) AS is_stale,
          CASE
            WHEN p.units      IS NOT NULL THEN COALESCE(p.units * lp.price_clp,
                                                        p.units * lp.price_usd * ${FX})
@@ -166,7 +169,7 @@ const VALUED = `
  * @param {string|null} userId  null = todos los usuarios
  * @returns {Promise<{date:string, users:number, positions:number}>}
  */
-export async function writeSnapshots(date = todayISO(), userId = null) {
+export async function writeSnapshots(date = todayCL(), userId = null) {
   const scopePos  = userId ? 'WHERE p.user_id = $2'  : '';
   const params    = userId ? [date, userId] : [date];
 
@@ -175,15 +178,16 @@ export async function writeSnapshots(date = todayISO(), userId = null) {
   //    tipo, así que no permite reconstruir cuánto valía un activo puntual.
   const { rowCount: nPositions } = await query(
     `INSERT INTO position_snapshots
-       (user_id, date, custodian_id, instrument_id, units, price_clp, value_clp, value_usd)
+       (user_id, date, custodian_id, instrument_id, units, price_clp, value_clp, value_usd, is_stale)
      SELECT v.user_id, $1, v.custodian_id, v.instrument_id, v.units,
-            v.price_clp, v.value_clp, v.value_usd
+            v.price_clp, v.value_clp, v.value_usd, v.is_stale
      FROM (${VALUED} ${scopePos}) v
      ON CONFLICT (user_id, date, custodian_id, instrument_id)
      DO UPDATE SET units     = EXCLUDED.units,
                    price_clp = EXCLUDED.price_clp,
                    value_clp = EXCLUDED.value_clp,
-                   value_usd = EXCLUDED.value_usd`,
+                   value_usd = EXCLUDED.value_usd,
+                   is_stale  = EXCLUDED.is_stale`,
     params
   );
 
@@ -209,24 +213,27 @@ export async function writeSnapshots(date = todayISO(), userId = null) {
     `WITH by_type AS (
        SELECT ps.user_id, i.type,
               SUM(ps.value_clp) AS clp,
-              SUM(ps.value_usd) AS usd
+              SUM(ps.value_usd) AS usd,
+              count(*) FILTER (WHERE ps.is_stale) AS stale
        FROM position_snapshots ps
        JOIN instruments i ON i.id = ps.instrument_id
        WHERE ps.date = $1 ${userId ? 'AND ps.user_id = $2' : ''}
        GROUP BY ps.user_id, i.type
      )
-     INSERT INTO portfolio_snapshots (user_id, date, total_clp, total_usd, breakdown)
+     INSERT INTO portfolio_snapshots (user_id, date, total_clp, total_usd, breakdown, stale_positions)
      SELECT user_id, $1,
             COALESCE(SUM(clp), 0),
             COALESCE(SUM(usd), 0),
             jsonb_object_agg(type, jsonb_build_object('clp', COALESCE(clp, 0),
-                                                      'usd', COALESCE(usd, 0)))
+                                                      'usd', COALESCE(usd, 0))),
+            COALESCE(SUM(stale), 0)
      FROM by_type
      GROUP BY user_id
      ON CONFLICT (user_id, date)
-     DO UPDATE SET total_clp = EXCLUDED.total_clp,
-                   total_usd = EXCLUDED.total_usd,
-                   breakdown = EXCLUDED.breakdown`,
+     DO UPDATE SET total_clp       = EXCLUDED.total_clp,
+                   total_usd       = EXCLUDED.total_usd,
+                   breakdown       = EXCLUDED.breakdown,
+                   stale_positions = EXCLUDED.stale_positions`,
     params
   );
 
@@ -253,7 +260,7 @@ export async function writeSnapshots(date = todayISO(), userId = null) {
  * porque lo usan las rutas de positions, movements y portfolio.
  * @returns {Promise<{date:string, total_clp:number, total_usd:number, breakdown:object}>}
  */
-export async function computeAndSaveSnapshot(userId, date = todayISO()) {
+export async function computeAndSaveSnapshot(userId, date = todayCL()) {
   await writeSnapshots(date, userId);
 
   const { rows } = await query(
@@ -274,7 +281,7 @@ export async function computeAndSaveSnapshot(userId, date = todayISO()) {
 }
 
 /** Snapshots del día para TODOS los usuarios. Lo llama el cron. */
-export async function snapshotAllUsers(date = todayISO()) {
+export async function snapshotAllUsers(date = todayCL()) {
   const r = await writeSnapshots(date);
   console.log(`[portfolioService] snapshots ${r.date}: ${r.users} usuario(s), ${r.positions} posición(es)`);
   return r;
@@ -292,7 +299,7 @@ export async function getSummary(userId) {
   );
 
   // rows[0] sería hoy si ya hay snapshot; usamos el más reciente que sea < hoy.
-  const today = todayISO();
+  const today = todayCL();
   const prev = rows.find((r) => r.date < today) || rows[1] || null;
 
   let changeClp = null, changePct = null;
@@ -319,7 +326,8 @@ export async function getSnapshots(userId, from, to) {
   if (from) { params.push(from); clauses.push(`date >= $${params.length}`); }
   if (to) { params.push(to); clauses.push(`date <= $${params.length}`); }
   const { rows } = await query(
-    `SELECT date, total_clp, total_usd, breakdown FROM portfolio_snapshots
+    `SELECT date, total_clp, total_usd, breakdown, stale_positions
+     FROM portfolio_snapshots
      WHERE ${clauses.join(' AND ')} ORDER BY date ASC`,
     params
   );
@@ -328,6 +336,10 @@ export async function getSnapshots(userId, from, to) {
     total_clp: Number(r.total_clp),
     total_usd: Number(r.total_usd),
     breakdown: r.breakdown,
+    // Cuántas posiciones de ese día se valorizaron con un precio de
+    // carry-forward. El total sigue siendo el que corresponde; esto permite
+    // marcar el punto en el gráfico en vez de descartarlo.
+    stale_positions: Number(r.stale_positions ?? 0),
   }));
 }
 
