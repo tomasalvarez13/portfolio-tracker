@@ -18,6 +18,13 @@
 
 BEGIN;
 
+-- En Supabase las extensiones viven en el schema `extensions`, no en `public`.
+-- Si pg_trgm ya está instalada ahí, el CREATE EXTENSION de abajo es un no-op y
+-- similarity() / % / gin_trgm_ops quedan fuera del search_path por defecto.
+-- Incluirla acá cubre los dos casos: un schema que no existe se ignora en
+-- silencio, así que esto es seguro también en un Postgres común.
+SET LOCAL search_path = public, extensions;
+
 -- ----------------------------------------------------------------------------
 -- 1. TRIGRAMAS
 --
@@ -89,7 +96,9 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 STABLE
-SET search_path = public
+-- extensions: ahí vive pg_trgm en Supabase. Sin esto similarity() y % no
+-- resuelven y la función revienta en runtime.
+SET search_path = public, extensions
 SET pg_trgm.similarity_threshold = 0.15
 SET pg_trgm.word_similarity_threshold = 0.45
 AS $$
@@ -107,6 +116,38 @@ AS $$
     AND (i.search_text % lower(p_text) OR lower(p_text) <% i.search_text)
   ORDER BY similarity DESC, i.name
   LIMIT p_limit;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 3b. CANDIDATO DE CUSTODIO
+--
+-- La cartola trae el nombre de quien la emite ("Fintual", "Banchile Inversiones
+-- S.A."). Esto lo mapea al maestro de custodios.
+--
+-- Va como función y no como query en el backend por la misma razón que la de
+-- arriba: los operadores de pg_trgm dependen del search_path, y el del rol con
+-- que se conecta el backend no está garantizado. Acá queda fijo.
+--
+-- El umbral es más alto que el de los activos (0.3 contra 0.15): equivocarse de
+-- custodio manda los saldos al lugar equivocado y crea una posición duplicada,
+-- mientras equivocarse de activo se ve en la pantalla de revisión.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION match_custodian(p_text TEXT)
+RETURNS TABLE (id INTEGER, slug TEXT, name TEXT, sim REAL)
+LANGUAGE sql
+STABLE
+SET search_path = public, extensions
+SET pg_trgm.similarity_threshold = 0.3
+SET pg_trgm.word_similarity_threshold = 0.6
+AS $$
+  SELECT c.id, c.slug::text, c.name::text,
+         GREATEST(similarity(lower(c.name), lower(p_text)),
+                  word_similarity(lower(p_text), lower(c.name))) AS sim
+  FROM custodians c
+  WHERE c.id <> 0 AND c.canonical_id IS NULL
+    AND (lower(c.name) % lower(p_text) OR lower(p_text) <% lower(c.name))
+  ORDER BY sim DESC
+  LIMIT 1;
 $$;
 
 -- ----------------------------------------------------------------------------
@@ -182,7 +223,7 @@ CREATE OR REPLACE FUNCTION merge_instruments(p_source INTEGER, p_target INTEGER)
 RETURNS TABLE (transacciones INTEGER, saldos_sumados INTEGER, snapshots INTEGER, usuarios INTEGER)
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $fn$
 DECLARE
   n_tx     INTEGER := 0;   -- repuntadas

@@ -30,18 +30,18 @@ export async function matchCandidates(userId, text, limit = 8) {
   return rows.map((r) => ({ ...r, similarity: Number(r.similarity) }));
 }
 
-/** Adivina el custodio a partir del nombre que trae la cartola. */
+/**
+ * Adivina el custodio a partir del nombre que trae la cartola.
+ *
+ * Delega en match_custodian() en vez de armar la query acá: los operadores de
+ * pg_trgm dependen del search_path, y el del rol con que se conecta el backend
+ * no está garantizado (en Supabase pg_trgm vive en el schema `extensions`). La
+ * función lo fija.
+ */
 export async function matchCustodian(name) {
   if (!name) return null;
-  const { rows } = await query(
-    `SELECT id, slug, name, similarity(lower(name), lower($1)) AS sim
-     FROM custodians
-     WHERE id <> 0 AND canonical_id IS NULL
-       AND (lower(name) % lower($1) OR lower($1) <% lower(name))
-     ORDER BY sim DESC LIMIT 1`,
-    [name]
-  );
-  return rows[0] && Number(rows[0].sim) >= 0.3 ? rows[0] : null;
+  const { rows } = await query('SELECT * FROM match_custodian($1)', [name]);
+  return rows[0] ?? null;
 }
 
 /**
