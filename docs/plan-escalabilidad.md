@@ -1,7 +1,7 @@
 # Plan de escalabilidad
 
 Estado: **Fase 1, §3.3 y §3.1 en producción. §2a implementada.** Siguiente:
-§2b (postergable) o directo a la Fase 3. · Última actualización: 2026-08-31
+§3.4, el mantenedor admin. · Última actualización: 2026-08-31
 
 | Fase | Estado | Rama |
 |---|---|---|
@@ -9,7 +9,8 @@ Estado: **Fase 1, §3.3 y §3.1 en producción. §2a implementada.** Siguiente:
 | 3.3 — Snapshots set-based | ✅ implementada, falta aplicar migración 003 | `feat/fase-2-snapshots` |
 | 3.1 — Cartola → maestro | ✅ implementada, falta aplicar migración 004 | `feat/fase-2-cartola` |
 | 2a — Cron por cola | ✅ implementada, falta aplicar migración 005 | `feat/fase-2a-cron` |
-| 2b — Cascada de fuentes | ⏭ siguiente (postergable) | `feat/fase-2b-fuentes` |
+| 3.4 — Mantenedor admin | ⏭ siguiente | `feat/fase-2c-admin` |
+| 2b — Cascada de fuentes | pendiente, postergable | `feat/fase-2b-fuentes` |
 | 3 — Vistas por custodio y activo | pendiente | `feat/fase-3-analytics` |
 
 Una rama por fase, siempre saliendo de `main` actualizado.
@@ -528,6 +529,84 @@ Y en la UI, `source` y `confidence` visibles. Ya existe el precedente de
 - [ ] Límite diario de resoluciones con LLM (una fuente caída no puede disparar cientos)
 - [ ] `source` y `confidence` visibles en la UI
 
+### 3.4 Mantenedor admin
+
+Hoy el panel admin ve usuarios, invitaciones y la cola de activos por mapear. No
+ve el maestro completo, no ve los custodios, y no ve qué hizo el cron. Todo eso
+se consulta por SQL, que no escala como forma de operar.
+
+Va **antes** de §2b a propósito: la cascada de fuentes va a generar candidatos
+que alguien tiene que revisar, y sin un mantenedor esa cola no tendría dónde
+mostrarse.
+
+#### Un agujero que hay que cerrar primero
+
+`/api/instruments` está montado con `requireAuth` **sin** `requireAdmin`, y su
+`DELETE` cascadea a `prices`, `positions`, `transactions` y
+`position_snapshots`. O sea: **cualquier usuario autenticado puede borrar un
+instrumento y llevarse las posiciones y el historial de todos los demás.**
+
+El comentario del archivo lo dice desde v1 —"escritura libre en v1
+(single-owner). En multi-usuario real, restringir POST/PUT/DELETE a admin"— pero
+la app ya es multi-usuario desde el signup por invitación.
+
+Además, con `canonical_id` en su lugar, borrar ya casi nunca es lo correcto:
+fusionar preserva el historial de precios y las posiciones. El `DELETE` debería
+quedar solo para activos sin ninguna transacción asociada.
+
+#### Mantenedor de instrumentos
+
+Tabla completa con búsqueda (reusando `match_instruments`), filtros por
+`status`, `type` y `api_source`, y por fila: último precio con su fecha y si es
+`is_stale`, cuántos usuarios lo tienen, cuántas transacciones tiene.
+
+Acciones: editar los campos del maestro, prender y apagar `fetch_enabled`,
+crear uno nuevo a mano, fusionar (ya existe `merge_instruments()`), y
+deprecar. La cola de `pending_mapping` que ya está pasa a ser un filtro de esta
+misma tabla en vez de una sección aparte.
+
+#### Mantenedor de custodios
+
+Listar, crear, renombrar y **fusionar**. Lo último no existe: `custodians`
+tiene la columna `canonical_id` desde la migración 002 pero nunca se le hizo
+una función ni una UI, así que dos custodios duplicados hoy solo se arreglan a
+mano. Y como cualquier usuario puede crear custodios desde el form de
+posiciones, los duplicados van a aparecer.
+
+`merge_custodians()` es más simple que la de instrumentos: repunta
+`transactions`, `positions`, `position_snapshots` y `statements`, y no tiene el
+problema de colisión de saldos, porque el saldo es único por (usuario,
+custodio, activo, fecha) y mover el custodio no puede chocar con otro saldo del
+mismo activo salvo que el usuario tuviera el activo en los dos custodios — caso
+que sí hay que sumar, igual que en instrumentos.
+
+#### Ejecuciones del cron
+
+`price_fetch_jobs` guarda el estado por (instrumento, fecha), pero **no permite
+reconstruir una ejecución**: los jobs se reabren, se reintentan y se
+sobreescriben, así que mirando la tabla no se puede responder "qué pasó en la
+corrida de las 8:30 de hoy".
+
+Hace falta una tabla `job_runs` que el `enqueue`/`run` escriba: cuándo empezó,
+cuándo terminó, cuántos encoló, cuántos ok / no_data / failed, quién la disparó
+(cron, refresh manual, workflow_dispatch). Con eso el panel muestra un historial
+de corridas y, entrando a una, el detalle de sus jobs.
+
+Más lo que ya existe pero no tiene dónde verse: la cola del día por estado, los
+instrumentos que agotaron sus reintentos con su último error, y un botón para
+re-encolar un job puntual sin esperar a la corrida siguiente.
+
+- [ ] `requireAdmin` en `POST`/`PUT`/`DELETE` de `/api/instruments`
+- [ ] `DELETE` solo si el instrumento no tiene transacciones; si no, deprecar o fusionar
+- [ ] `GET /api/admin/instruments` con búsqueda, filtros y paginado
+- [ ] `PUT /api/admin/instruments/:id` para editar el maestro completo
+- [ ] `merge_custodians()` + endpoints de custodios en admin
+- [ ] Tabla `job_runs` escrita por `enqueue` y `run`
+- [ ] `GET /api/admin/cron/runs` y `GET /api/admin/cron/runs/:id`
+- [ ] `POST /api/admin/cron/jobs/:id/retry`
+- [ ] Panel: pestañas de Instrumentos, Custodios y Cron
+- [ ] La cola de `pending_mapping` pasa a ser un filtro de la tabla de instrumentos
+
 ### 3.3 Snapshots set-based
 
 Reemplazar el loop JS de `snapshotAllUsers` por un `INSERT ... SELECT` que
@@ -806,12 +885,25 @@ Necesario recién cuando el maestro empiece a crecer, y el maestro no puede
 crecer hasta que la cartola pueda crear activos. Por eso va **después** de la
 cartola, no antes — al revés de lo que decía la versión anterior de este plan.
 
-### 4. §3.2b / Fase 2b — Cascada de fuentes ← siguiente, y postergable
+### 4. §3.4 — Mantenedor admin ← siguiente
+
+Con §2a el cron genera estado —cola, reintentos, instrumentos agotados— que hoy
+solo se ve por SQL. Y el maestro ya puede crecer solo desde las cartolas (§3.1),
+sin que nadie lo esté mirando.
+
+Va antes de §2b porque la cascada de fuentes va a producir candidatos de precio
+que alguien tiene que aprobar, y sin mantenedor esa cola no tendría dónde
+mostrarse.
+
+Arranca cerrando un agujero real: `/api/instruments` acepta escrituras de
+cualquier usuario autenticado, y su `DELETE` cascadea a las posiciones de todos.
+
+### 5. §3.2b / Fase 2b — Cascada de fuentes, postergable
 
 Postergable sin costo. Hasta que exista, los activos sin fuente siguen en
 `manual`, que es lo que ya se hace hoy.
 
-### 5. §4 / Fase 3 — Vistas por custodio y por activo
+### 6. §4 / Fase 3 — Vistas por custodio y por activo
 
 Necesita profundidad en `position_snapshots`, así que gana con cada semana que
 pase desde el punto 1.
@@ -821,6 +913,12 @@ pase desde el punto 1.
 ## 8. Pendientes sueltos
 
 Cosas que no son de ninguna fase pero conviene no perder:
+
+- **`/api/instruments` acepta escrituras de cualquier usuario autenticado.**
+  Está montado con `requireAuth` sin `requireAdmin`, y su `DELETE` cascadea a
+  `prices`, `positions`, `transactions` y `position_snapshots`: un usuario puede
+  borrar un instrumento y llevarse el historial de todos. Se cierra en §3.4, y
+  es la razón de que esa fase vaya antes que §2b.
 
 - **`backend/package-lock.json` está desincronizado con `package.json`.** El
   lockfile todavía declara `yahoo-finance2` y su árbol (~983 líneas) pero
