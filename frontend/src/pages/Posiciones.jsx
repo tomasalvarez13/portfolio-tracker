@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   getPositions, getInstruments, createPosition, updatePosition,
   deletePosition, setManualPrice, refreshPrices, addAporte, getCustodians,
-  movePositionCustodian,
+  movePositionCustodian, createCustodian,
 } from '../services/api';
 import {
   formatCLP, formatUSD, formatPct, formatUnits, formatDate,
@@ -41,6 +41,10 @@ export default function Posiciones() {
   const [confirmDelete, setConfirmDelete] = useState(null);
   // Posición a la que se le está cambiando el custodio.
   const [movingCustodian, setMovingCustodian] = useState(null);
+  // Alta de custodio desde el mismo selector: sin esto habría que salir al form
+  // de nueva posición a crearlo y volver, justo en el flujo de repartir las
+  // posiciones que quedaron sin custodio.
+  const [newCustodian, setNewCustodian] = useState(null);
   const [refreshing, setRefreshing]   = useState(false);
   const [mutError, setMutError]       = useState(null);
   const [open, setOpen]               = useState({});
@@ -80,6 +84,20 @@ export default function Posiciones() {
       await movePositionCustodian(positionId, Number(custodianId));
       setMovingCustodian(null);
       await posHook.reload();
+    } catch (e) { setMutError(e.response?.data?.error || e.message); }
+  }
+
+  // Crea el custodio y mueve la posición ahí de una: es lo que el usuario
+  // quería hacer cuando eligió "crear".
+  async function handleCreateAndMove(positionId, nombre) {
+    const name = (nombre || '').trim();
+    if (name.length < 2) return;
+    setMutError(null);
+    try {
+      const c = await createCustodian({ name });
+      setNewCustodian(null);
+      await custHook.reload();
+      await handleMoveCustodian(positionId, c.id);
     } catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
 
@@ -316,14 +334,32 @@ export default function Posiciones() {
                                 </span>
                               ) : movingCustodian === p.id ? (
                                 <span className="inline-flex items-center gap-2">
-                                  <select autoFocus defaultValue={p.custodian_id ?? 0}
-                                    onChange={(e) => handleMoveCustodian(p.id, e.target.value)}
-                                    className="bg-bg-base border border-bg-border rounded px-2 py-1 text-xs">
-                                    {custodians.map((c) => (
-                                      <option key={c.id} value={c.id}>{c.name}</option>
-                                    ))}
-                                  </select>
-                                  <button onClick={() => setMovingCustodian(null)}
+                                  {newCustodian === null ? (
+                                    <select autoFocus defaultValue={p.custodian_id ?? 0}
+                                      onChange={(e) => {
+                                        if (e.target.value === '__nuevo') { setNewCustodian(''); return; }
+                                        handleMoveCustodian(p.id, e.target.value);
+                                      }}
+                                      className="bg-bg-base border border-bg-border rounded px-2 py-1 text-xs">
+                                      {custodians.map((c) => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                      ))}
+                                      <option value="__nuevo">+ Crear custodio…</option>
+                                    </select>
+                                  ) : (
+                                    <input autoFocus value={newCustodian} placeholder="Nombre del custodio"
+                                      onChange={(e) => setNewCustodian(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') { e.preventDefault(); handleCreateAndMove(p.id, newCustodian); }
+                                        if (e.key === 'Escape') setNewCustodian(null);
+                                      }}
+                                      className="bg-bg-base border border-bg-border rounded px-2 py-1 text-xs w-44" />
+                                  )}
+                                  {newCustodian !== null && (
+                                    <button onClick={() => handleCreateAndMove(p.id, newCustodian)}
+                                      className="text-xs text-accent hover:underline">crear y mover</button>
+                                  )}
+                                  <button onClick={() => { setMovingCustodian(null); setNewCustodian(null); }}
                                     className="text-xs text-muted hover:text-gray-200">cancelar</button>
                                 </span>
                               ) : (

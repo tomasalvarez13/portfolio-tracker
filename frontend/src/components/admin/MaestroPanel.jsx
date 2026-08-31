@@ -2,9 +2,10 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   adminGetInstruments, adminUpdateInstrument, adminGetCustodians,
   adminUpdateCustodian, adminMergeCustodian, mergeInstrument, searchInstruments,
+  createCustodian,
 } from '../../services/api';
 import { formatCLP, formatUSD, formatDate } from '../../utils/formatters';
-import { Package, Building2, Search } from 'lucide-react';
+import { Package, Building2, Search, Plus } from 'lucide-react';
 
 const TYPES    = ['stock_us', 'stock_cl', 'crypto', 'fondo_mutuo_cl', 'afp'];
 const SOURCES  = ['yahoo_finance', 'coingecko', 'cmf', 'sp', 'manual', 'alpha_vantage'];
@@ -219,6 +220,9 @@ export function CustodiansPanel() {
   const [editing, setEditing] = useState(null);
   const [nombre, setNombre]   = useState('');
   const [busy, setBusy]       = useState(false);
+  // Alta desde el panel. El endpoint es el mismo que usan el form de posiciones
+  // y la cartola: la lista es corta y los duplicados se fusionan desde acá.
+  const [nuevo, setNuevo]     = useState(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -242,7 +246,34 @@ export function CustodiansPanel() {
         <Building2 size={16} className="text-accent" />
         <h3 className="font-medium">Custodios</h3>
         <span className="text-xs text-muted">{activos.length} activos</span>
+        <div className="flex-1" />
+        {nuevo === null && (
+          <button onClick={() => { setNuevo(''); setError(null); }}
+            className="flex items-center gap-1 text-xs text-accent hover:underline">
+            <Plus size={12} /> Nuevo
+          </button>
+        )}
       </div>
+
+      {nuevo !== null && (
+        <div className="px-5 py-3 border-b border-bg-border flex gap-2">
+          <input autoFocus value={nuevo} placeholder="Nombre del custodio"
+            onChange={(e) => setNuevo(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); correr(async () => { await createCustodian({ name: nuevo.trim() }); setNuevo(null); }); }
+              if (e.key === 'Escape') setNuevo(null);
+            }}
+            className={`${inputCls} flex-1`} />
+          <button disabled={busy || nuevo.trim().length < 2}
+            onClick={() => correr(async () => { await createCustodian({ name: nuevo.trim() }); setNuevo(null); })}
+            className="px-3 py-1.5 rounded text-xs bg-accent hover:bg-accent/90 text-white disabled:opacity-50">
+            Crear
+          </button>
+          <button onClick={() => setNuevo(null)}
+            className="px-3 py-1.5 rounded text-xs text-muted hover:bg-bg-hover">Cancelar</button>
+        </div>
+      )}
+
       {error && <p className="px-5 py-2 text-xs text-loss">{error}</p>}
 
       <div className="divide-y divide-bg-border/60">
