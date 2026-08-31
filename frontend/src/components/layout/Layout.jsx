@@ -5,6 +5,7 @@ import Sidebar from './Sidebar.jsx';
 import BottomNav from './BottomNav.jsx';
 import OnboardingModal from '../OnboardingModal.jsx';
 import { useAuth } from '../../hooks/useAuth.jsx';
+import PrivacyToggle from '../PrivacyToggle.jsx';
 
 export default function Layout() {
   const { user } = useAuth();
@@ -37,6 +38,9 @@ export default function Layout() {
 
       {/* Bottom nav: solo mobile */}
       <BottomNav />
+
+      {/* Modo privado en mobile: la BottomNav ya tiene 5 ítems y no entra otro */}
+      <PrivacyToggle variant="floating" />
 
       {/* Onboarding: se muestra la primera vez que entra */}
       {showOnboarding && <OnboardingModal onDismiss={handleDismiss} />}

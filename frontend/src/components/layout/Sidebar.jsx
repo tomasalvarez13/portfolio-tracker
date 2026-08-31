@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.jsx';
+import PrivacyToggle from '../PrivacyToggle.jsx';
 import {
   LayoutDashboard,
   Layers,
@@ -67,6 +68,7 @@ export default function Sidebar() {
           </div>
           <span className="text-xs text-muted truncate">{user?.email}</span>
         </div>
+        <PrivacyToggle variant="sidebar" />
         <button onClick={signOut}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-muted hover:bg-bg-hover hover:text-loss transition-colors">
           <LogOut size={15} />

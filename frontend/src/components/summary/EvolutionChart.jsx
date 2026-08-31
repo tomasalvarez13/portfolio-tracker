@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { getTWR } from '../../services/api';
 import { formatCLP, formatUSD, formatPct, formatDate, colorForValue } from '../../utils/formatters';
+import { isHidden, maskDigits } from '../../utils/privacy.js';
 
 // ---- Selector de rango ----
 const RANGE_BUTTONS = [
@@ -289,11 +290,13 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
             <YAxis
               stroke="transparent"
               tick={{ fill: '#8b949e', fontSize: 11 }}
-              tickFormatter={v =>
-                currency === 'CLP'
+              tickFormatter={(v) => {
+                // Único monto real que no pasa por los formatters.
+                const t = currency === 'CLP'
                   ? `$${(v / 1_000_000).toFixed(0)}M`
-                  : `$${(v / 1_000).toFixed(0)}K`
-              }
+                  : `$${(v / 1_000).toFixed(0)}K`;
+                return isHidden() ? maskDigits(t) : t;
+              }}
               width={52}
               domain={[minVal * 0.97, maxVal * 1.03]}
             />
