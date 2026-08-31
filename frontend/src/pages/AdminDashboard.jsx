@@ -3,11 +3,12 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import {
   getAdminUsers, getAdminStats, deleteAdminUser,
   getInvitations, createInvitation, deleteInvitation,
+  getInviteRequests, approveInviteRequest, rejectInviteRequest,
 } from '../services/api';
 import { formatDate } from '../utils/formatters';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { isDemo } from '../demo/mode.js';
-import { LogOut, Users, Activity, TrendingUp, Layers, MailPlus, Trash2 } from 'lucide-react';
+import { LogOut, Users, Activity, TrendingUp, Layers, MailPlus, Trash2, Check, X, Inbox } from 'lucide-react';
 
 function StatCard({ label, value, Icon, color = 'text-accent' }) {
   return (
@@ -28,6 +29,7 @@ export default function AdminDashboard() {
   const [stats, setStats]       = useState(null);
   const [users, setUsers]       = useState([]);
   const [invites, setInvites]   = useState([]);
+  const [requests, setRequests] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [denied, setDenied]     = useState(false);
@@ -47,8 +49,10 @@ export default function AdminDashboard() {
   async function loadData() {
     setLoading(true); setLoadError(null); setDenied(false);
     try {
-      const [s, u, i] = await Promise.all([getAdminStats(), getAdminUsers(), getInvitations()]);
-      setStats(s); setUsers(u.users); setInvites(i.invitations);
+      const [s, u, i, r] = await Promise.all([
+        getAdminStats(), getAdminUsers(), getInvitations(), getInviteRequests(),
+      ]);
+      setStats(s); setUsers(u.users); setInvites(i.invitations); setRequests(r.requests);
     } catch (e) {
       const status = e.response?.status;
       // 401: sesión vencida → al login. 403: sesión válida sin rol admin.
@@ -87,12 +91,20 @@ export default function AdminDashboard() {
     } finally { setInviting(false); }
   }
 
+  async function handleResolve(id, action) {
+    try {
+      await (action === 'approve' ? approveInviteRequest(id) : rejectInviteRequest(id));
+      await loadData();
+    } catch (e) { alert(e.response?.data?.error || e.message); }
+  }
+
   async function handleRevoke(id) {
     try { await deleteInvitation(id); await loadData(); }
     catch (e) { alert(e.response?.data?.error || e.message); }
   }
 
   const filtered = users.filter(u => !search || u.email?.toLowerCase().includes(search.toLowerCase()));
+  const pendingCount = requests.filter(r => r.status === 'pending').length;
 
   const daysSince = (iso) => {
     if (!iso) return '—';
@@ -162,6 +174,76 @@ export default function AdminDashboard() {
           <StatCard label="Activos últimos 30d" value={stats?.active_users_30d ?? '—'}      Icon={Activity}   color="text-gain" />
           <StatCard label="Con posiciones"      value={stats?.users_with_positions ?? '—'}  Icon={Layers}     color="text-accent" />
           <StatCard label="Movimientos totales" value={stats?.total_movements ?? '—'}       Icon={TrendingUp} color="text-muted" />
+        </div>
+
+        {/* Solicitudes de invitación */}
+        <div className="card overflow-hidden">
+          <div className="px-4 py-3 border-b border-bg-border flex items-center gap-2">
+            <Inbox size={14} className="text-muted" />
+            <h2 className="font-medium text-sm">Solicitudes</h2>
+            {pendingCount > 0 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-accent/20 text-accent font-medium">
+                {pendingCount} pendiente{pendingCount === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[560px]">
+              <thead>
+                <tr className="text-left text-xs text-muted border-b border-bg-border">
+                  <th className="px-4 py-3 font-medium">Correo</th>
+                  <th className="px-4 py-3 font-medium">Nombre</th>
+                  <th className="px-4 py-3 font-medium">Solicitado</th>
+                  <th className="px-4 py-3 font-medium">Estado</th>
+                  <th className="px-4 py-3 font-medium text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map(r => (
+                  <tr key={r.id} className="border-b border-bg-border/50 hover:bg-bg-hover/30">
+                    <td className="px-4 py-3 font-medium">{r.email}</td>
+                    <td className="px-4 py-3 text-xs text-muted">{r.name || '—'}</td>
+                    <td className="px-4 py-3 text-xs text-muted">{formatDate(r.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                        r.status === 'approved' ? 'bg-gain/15 text-gain'
+                        : r.status === 'rejected' ? 'bg-loss/15 text-loss'
+                        : 'bg-accent/15 text-accent'
+                      }`}>
+                        {r.status === 'approved' ? 'Aprobada' : r.status === 'rejected' ? 'Rechazada' : 'Pendiente'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {r.status === 'pending' ? (
+                        <span className="inline-flex items-center gap-3">
+                          <button onClick={() => handleResolve(r.id, 'approve')}
+                            className="inline-flex items-center gap-1 text-xs text-gain hover:underline font-medium">
+                            <Check size={12} /> Aprobar
+                          </button>
+                          <button onClick={() => handleResolve(r.id, 'reject')}
+                            className="inline-flex items-center gap-1 text-xs text-muted hover:text-loss">
+                            <X size={12} /> Rechazar
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted">{formatDate(r.resolved_at)}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {requests.length === 0 && (
+                  <tr><td colSpan={5} className="px-4 py-8 text-center text-muted text-xs">
+                    Sin solicitudes.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {requests.some(r => r.status === 'approved') && (
+            <p className="px-4 py-2.5 border-t border-bg-border text-[11px] text-muted">
+              Aprobar crea la invitación, pero no manda ningún correo: avisale vos que ya puede registrarse.
+            </p>
+          )}
         </div>
 
         {/* Invitaciones */}

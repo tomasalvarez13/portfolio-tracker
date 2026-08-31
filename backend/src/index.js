@@ -10,6 +10,7 @@ import positionsRouter from './routes/positions.js';
 import movementsRouter from './routes/movements.js';
 import pricesRouter from './routes/prices.js';
 import pricesCronRouter from './routes/pricesCron.js';
+import inviteRequestsRouter from './routes/inviteRequests.js';
 import portfolioRouter from './routes/portfolio.js';
 import marketRouter from './routes/market.js';
 import adminRouter from './routes/admin.js';
@@ -20,6 +21,10 @@ dotenv.config();
 
 const app = express();
 app.use(express.json());
+
+// Render corre detrás de su propio proxy: sin esto req.ip es el del proxy y el
+// límite por IP de /api/invite-requests trataría a todo el mundo como un cliente.
+app.set('trust proxy', 1);
 
 // CORS: abierto a todos los orígenes.
 // La seguridad está en el JWT de Supabase que valida cada request.
@@ -33,6 +38,9 @@ app.get('/api/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
 // Endpoints del scraper externo (sin JWT, solo CRON_SECRET)
 app.use('/api/prices', pricesCronRouter);
+
+// Solicitud de invitación: público, quien la pide todavía no tiene cuenta.
+app.use('/api/invite-requests', inviteRequestsRouter);
 
 // Rutas protegidas (requieren JWT de Supabase)
 app.use('/api/instruments', requireAuth, instrumentsRouter);
