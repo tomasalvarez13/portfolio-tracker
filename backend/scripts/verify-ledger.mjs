@@ -32,6 +32,9 @@ const {
 const { computePositions } = await import('../src/services/portfolioService.js');
 
 const U = '11111111-1111-1111-1111-111111111111';
+// Sufijo por corrida: el bloque de mover custodio crea su propio activo, y sin
+// aislarlo la segunda corrida encuentra unidades acumuladas de la primera.
+const RUN = String(process.hrtime.bigint()).slice(-9);
 let fails = 0;
 const check = (name, got, want) => {
   const ok = String(got) === String(want);
@@ -120,6 +123,43 @@ try {
   const after = Number((await query('SELECT units FROM positions WHERE user_id=$1 AND custodian_id=$2 AND instrument_id=$3', [U, banchile, rn])).rows[0].units);
   check('tras borrar el movimiento', after, before);
 
+  console.log('\n— mover una posición de custodio conserva el ledger');
+  // Activo propio del test: mover es destructivo sobre el origen, así que no
+  // puede operar sobre uno del seed que otros bloques o corridas también usan.
+  const inst3 = (await query(
+    `INSERT INTO instruments (name, type, currency, api_source, status)
+     VALUES ($1,'stock_us','USD','manual','active') RETURNING id`,
+    [`Mover custodio ${RUN}`])).rows[0].id;
+  await setBalance({ userId: U, custodianId: 0, instrumentId: inst3, date: today, units: 80, supersede: true });
+  await recordMovement({ userId: U, custodianId: 0, instrumentId: inst3, date: today, kind: 'aporte', units: 20, amountClp: 50000 });
+  const antesMov = Number((await query(
+    'SELECT units FROM positions WHERE user_id=$1 AND custodian_id=0 AND instrument_id=$2', [U, inst3])).rows[0].units);
+  check('estado inicial', antesMov, 100);
+
+  const mv = (await query('SELECT * FROM move_position_custodian($1,$2,$3,$4)', [U, inst3, 0, fintual])).rows[0];
+  check('movió el ledger completo', Number(mv.transacciones), 2);
+  check('nada quedó en el origen', (await query(
+    'SELECT count(*) c FROM positions WHERE user_id=$1 AND custodian_id=0 AND instrument_id=$2', [U, inst3])).rows[0].c, 0);
+  check('las unidades se conservan en el destino', Number((await query(
+    'SELECT units FROM positions WHERE user_id=$1 AND custodian_id=$2 AND instrument_id=$3', [U, fintual, inst3])).rows[0].units), 100);
+  check('el aporte sigue en el ledger', (await query(
+    `SELECT count(*) c FROM transactions WHERE user_id=$1 AND instrument_id=$2 AND custodian_id=$3 AND kind='aporte'`,
+    [U, inst3, fintual])).rows[0].c, 1);
+
+  console.log('\n— si ya existe en el destino, los saldos se suman');
+  await setBalance({ userId: U, custodianId: 0, instrumentId: inst3, date: today, units: 7, supersede: true });
+  const mv2 = (await query('SELECT * FROM move_position_custodian($1,$2,$3,$4)', [U, inst3, 0, fintual])).rows[0];
+  check('reporta el saldo sumado', Number(mv2.saldos_sumados) > 0, true);
+  check('las unidades se sumaron, no se pisaron', Number((await query(
+    'SELECT units FROM positions WHERE user_id=$1 AND custodian_id=$2 AND instrument_id=$3', [U, fintual, inst3])).rows[0].units), 107);
+
+  console.log('\n— la función rechaza lo que no tiene sentido');
+  let e1 = false, e2 = false;
+  try { await query('SELECT * FROM move_position_custodian($1,$2,$3,$3)', [U, inst3, fintual]); } catch { e1 = true; }
+  check('mismo origen y destino', e1, true);
+  try { await query('SELECT * FROM move_position_custodian($1,$2,999,$3)', [U, inst3, fintual]); } catch { e2 = true; }
+  check('origen sin transacciones', e2, true);
+
   console.log('\n— rebuild total es idempotente');
   const snap = (await query('SELECT user_id,custodian_id,instrument_id,units,amount_clp,amount_usd FROM positions ORDER BY 1,2,3')).rows;
   await rebuildPositionsForUser(U);
@@ -137,6 +177,10 @@ try {
   console.error('\nERROR:', e.message, '\n', e.stack?.split('\n').slice(0,4).join('\n'));
   fails++;
 } finally {
+  // El bloque de mover custodio crea un activo propio: sin limpiarlo, la
+  // corrida siguiente encuentra unidades acumuladas en el destino.
+  try { await query(`DELETE FROM instruments WHERE name LIKE 'Mover custodio %'`); }
+  catch (e) { console.error('(limpieza falló:', e.message, ')'); }
   await pool.end();
   process.exit(fails === 0 ? 0 : 1);
 }

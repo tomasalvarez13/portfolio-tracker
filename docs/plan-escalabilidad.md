@@ -968,6 +968,11 @@ Cosas que no son de ninguna fase pero conviene no perder:
   stale. Lo irónico es que el dato está: `fetchFondoCmf` ya descarga 10 días y
   descarta todas las filas menos la última. Va con §2b, que es el mismo
   territorio.
+- ~~No había forma de mover una posición de custodio~~ — resuelto con
+  `move_position_custodian()` y el botón "custodio" en Posiciones. Hacía falta
+  porque todo lo anterior a la Fase 1 quedó en el centinela, y cerrar y recrear
+  la posición partía su historial en dos buckets justo cuando las vistas de la
+  Fase 3 empiezan a acumular.
 - **`CFMLVENFR` no registra precio desde julio.** Yahoo devuelve su última
   operación real, así que marca `no_data` todos los días. Si es ilíquido de
   verdad, corresponde reconocerlo con un rezago propio en vez de tratarlo como

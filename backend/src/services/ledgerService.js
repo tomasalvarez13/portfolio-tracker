@@ -149,6 +149,21 @@ export async function deleteTransaction(userId, txId) {
   return true;
 }
 
+/**
+ * Mueve una posición de un custodio a otro, conservando el ledger.
+ *
+ * No es un "editar el campo": `positions` es derivada, así que lo que se mueve
+ * son las transacciones y la historia. Si el usuario ya tenía ese activo en el
+ * destino, los saldos que coinciden en fecha se suman — son la misma tenencia.
+ */
+export async function movePositionCustodian({ userId, instrumentId, from, to }) {
+  const { rows } = await query(
+    'SELECT * FROM move_position_custodian($1, $2, $3, $4)',
+    [userId, instrumentId, from, to]
+  );
+  return rows[0];
+}
+
 /** Resuelve (custodio, activo) desde el id de una fila de `positions`. */
 export async function resolvePosition(userId, positionId) {
   const { rows } = await query(

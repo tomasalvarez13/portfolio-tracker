@@ -36,7 +36,8 @@ function buildPositions(s) {
     totalUsd += value_usd;
     positions.push({
       id: 1000 + inst.id, instrument_id: inst.id,
-      custodian_id: 0, custodian_name: 'Sin custodio',
+      custodian_id: s.custodianByInstrument?.[inst.id] ?? 0,
+      custodian_name: (DEMO_CUSTODIANS.find((c) => c.id === (s.custodianByInstrument?.[inst.id] ?? 0)) || DEMO_CUSTODIANS[0]).name,
       name: inst.name, alias: inst.alias, type: inst.type, ticker: inst.ticker,
       currency: inst.currency, api_source: inst.api_source,
       units: u, amount_clp: null, amount_usd: null,
@@ -412,6 +413,16 @@ export function handle({ method, path, params = {}, body = {} }) {
       delete s.units[instId];
       recomputeToday(s);
       return { status: 204, data: null };
+    }
+
+    // El demo no modela custodios por posición (todo cae en el centinela), pero
+    // el endpoint tiene que existir para que el botón no dé 404.
+    if (m === 'post' && c === 'custodian') {
+      const dest = Number(body?.custodian_id);
+      if (!Number.isInteger(dest)) return bad('custodian_id es obligatorio');
+      s.custodianByInstrument = s.custodianByInstrument || {};
+      s.custodianByInstrument[instId] = dest;
+      return ok({ moved_to: dest, transacciones: 1, saldos_sumados: 0, snapshots: 0 });
     }
 
     if (m === 'post' && c === 'aporte') {

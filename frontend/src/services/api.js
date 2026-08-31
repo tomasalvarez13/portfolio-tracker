@@ -38,6 +38,8 @@ export const createPosition = (body) => api.post('/positions', body).then((r) =>
 export const updatePosition = (id, body) => api.put(`/positions/${id}`, body).then((r) => r.data);
 export const deletePosition = (id) => api.delete(`/positions/${id}`);
 export const addAporte = (id, body) => api.post(`/positions/${id}/aporte`, body).then((r) => r.data);
+export const movePositionCustodian = (id, custodianId) =>
+  api.post(`/positions/${id}/custodian`, { custodian_id: custodianId }).then((r) => r.data);
 
 // --- Movimientos ---
 export const getMovements = (params) => api.get('/movements', { params }).then((r) => r.data);

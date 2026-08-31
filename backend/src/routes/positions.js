@@ -7,6 +7,7 @@ import { Router } from 'express';
 import { computePositions, computeAndSaveSnapshot } from '../services/portfolioService.js';
 import {
   NO_CUSTODIAN, setBalance, recordMovement, closePosition, resolvePosition,
+  movePositionCustodian,
 } from '../services/ledgerService.js';
 import { todayCL } from '../utils/dates.js';
 
@@ -136,6 +137,40 @@ router.post('/:id/aporte', async (req, res) => {
 
     const position = await resolvePosition(req.user.id, req.params.id);
     res.status(201).json({ position, movement });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// POST /api/positions/:id/custodian   { custodian_id }
+//
+// Mover una posición de custodio no es editar un campo: `positions` es una
+// caché derivada, así que lo que se mueve es el ledger y la historia. Hace
+// falta porque todo lo que existía antes de la Fase 1 quedó en "sin custodio",
+// y cerrar la posición para recrearla en el custodio correcto partiría su
+// historial en dos buckets.
+router.post('/:id/custodian', async (req, res) => {
+  const destino = Number(req.body?.custodian_id);
+  if (!Number.isInteger(destino)) {
+    return res.status(400).json({ error: 'custodian_id es obligatorio' });
+  }
+
+  const pos = await resolvePosition(req.user.id, req.params.id);
+  if (!pos) return res.status(404).json({ error: 'Posición no encontrada' });
+  if (pos.custodian_id === destino) {
+    return res.status(400).json({ error: 'La posición ya está en ese custodio' });
+  }
+
+  try {
+    const r = await movePositionCustodian({
+      userId: req.user.id,
+      instrumentId: pos.instrument_id,
+      from: pos.custodian_id,
+      to: destino,
+    });
+    // El snapshot del día tiene que reflejar el cambio de bucket al toque.
+    await refreshSnapshot(req.user.id, todayCL());
+    res.json({ moved_to: destino, ...r });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
