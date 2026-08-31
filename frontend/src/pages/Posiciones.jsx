@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   getPositions, getInstruments, createPosition, updatePosition,
   deletePosition, setManualPrice, refreshPrices, addAporte, getCustodians,
+  movePositionCustodian,
 } from '../services/api';
 import {
   formatCLP, formatUSD, formatPct, formatUnits, formatDate,
@@ -38,6 +39,8 @@ export default function Posiciones() {
   const [editing, setEditing]         = useState(null); // posición existente a editar
   const [pricing, setPricing]         = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  // Posición a la que se le está cambiando el custodio.
+  const [movingCustodian, setMovingCustodian] = useState(null);
   const [refreshing, setRefreshing]   = useState(false);
   const [mutError, setMutError]       = useState(null);
   const [open, setOpen]               = useState({});
@@ -64,6 +67,18 @@ export default function Posiciones() {
       if (editing?.id) await updatePosition(editing.id, body);
       else await createPosition(body);
       closeAll();
+      await posHook.reload();
+    } catch (e) { setMutError(e.response?.data?.error || e.message); }
+  }
+
+  // Mover de custodio no es editar un campo: `positions` es derivada, así que
+  // el backend mueve el ledger y reconstruye. Por eso va como acción aparte y
+  // no dentro del form de edición.
+  async function handleMoveCustodian(positionId, custodianId) {
+    setMutError(null);
+    try {
+      await movePositionCustodian(positionId, Number(custodianId));
+      setMovingCustodian(null);
       await posHook.reload();
     } catch (e) { setMutError(e.response?.data?.error || e.message); }
   }
@@ -145,6 +160,15 @@ export default function Posiciones() {
       )}
 
       {displayError && <ErrorBox message={displayError} />}
+
+      {positions.filter((p) => p.custodian_id === 0).length > 0 && (
+        <div className="card px-4 py-3 text-xs text-muted">
+          {positions.filter((p) => p.custodian_id === 0).length} posición(es) sin custodio asignado — son
+          las que existían antes de que la app manejara custodios. Asignalas con el botón{' '}
+          <span className="text-gray-200">custodio</span> de cada fila: mueve su historial completo, no lo
+          parte en dos. Hasta que lo hagas, la vista por custodio del Análisis las agrupa todas juntas.
+        </div>
+      )}
 
       {/* Elección de flujo */}
       {mode === 'choose' && (
@@ -290,11 +314,25 @@ export default function Posiciones() {
                                   <button onClick={() => handleDelete(p.id)} className="text-xs text-loss font-medium hover:underline">Sí</button>
                                   <button onClick={() => setConfirmDelete(null)} className="text-xs text-muted hover:text-gray-200">No</button>
                                 </span>
+                              ) : movingCustodian === p.id ? (
+                                <span className="inline-flex items-center gap-2">
+                                  <select autoFocus defaultValue={p.custodian_id ?? 0}
+                                    onChange={(e) => handleMoveCustodian(p.id, e.target.value)}
+                                    className="bg-bg-base border border-bg-border rounded px-2 py-1 text-xs">
+                                    {custodians.map((c) => (
+                                      <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                  </select>
+                                  <button onClick={() => setMovingCustodian(null)}
+                                    className="text-xs text-muted hover:text-gray-200">cancelar</button>
+                                </span>
                               ) : (
                                 <>
                                   {p.api_source === 'manual' && (
                                     <button onClick={() => setPricing(p)} className="text-xs text-accent hover:underline mr-2">precio</button>
                                   )}
+                                  <button onClick={() => { closeAll(); setMovingCustodian(p.id); }}
+                                    className="text-xs text-muted hover:text-gray-200 mr-2">custodio</button>
                                   <button onClick={() => { closeAll(); setEditing(p); }} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
                                   <button onClick={() => setConfirmDelete(p.id)} className="text-xs text-muted hover:text-loss">eliminar</button>
                                 </>
