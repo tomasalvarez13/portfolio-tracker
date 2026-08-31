@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { Navigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth.jsx';
-import { ArrowLeft } from 'lucide-react';
+import { requestInvitation } from '../services/api';
+import { ArrowLeft, MailPlus } from 'lucide-react';
+
+// El hook de Supabase rechaza con este texto; el trigger de respaldo, al ser una
+// excepción de Postgres, llega envuelta como "Database error saving new user".
+const NOT_INVITED_RE = /no est[aá] invitado|signup_not_invited|Database error saving new user/i;
 
 export default function Login() {
   const { session, signIn, signUp } = useAuth();
@@ -13,12 +18,14 @@ export default function Login() {
   const [error, setError]     = useState(null);
   const [info, setInfo]       = useState(null);
   const [busy, setBusy]       = useState(false);
+  const [notInvited, setNotInvited]   = useState(false);
+  const [requesting, setRequesting]   = useState(false);
 
   if (session) return <Navigate to="/app/resumen" replace />;
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError(null); setInfo(null); setBusy(true);
+    setError(null); setInfo(null); setNotInvited(false); setBusy(true);
     try {
       if (mode === 'login') {
         const { error } = await signIn(email, password);
@@ -38,13 +45,27 @@ export default function Login() {
         setError('Email o contraseña incorrectos. Si tu cuenta es nueva, confirma tu correo primero.');
       } else if (msg.includes('Email not confirmed')) {
         setError('Debes confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.');
+      } else if (NOT_INVITED_RE.test(msg)) {
+        setNotInvited(true);
+        setError('Este correo no tiene una invitación.');
       } else {
-        // El hook de invitaciones rechaza con su propio mensaje (403); llega tal
-        // cual acá, así que se muestra sin traducir.
         setError(msg || 'Error de autenticación');
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleRequestInvitation() {
+    setRequesting(true); setError(null);
+    try {
+      await requestInvitation({ email: email.trim(), name: name.trim() || null });
+      setNotInvited(false);
+      setInfo('Solicitud enviada. Te avisamos cuando la aprobemos.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'No se pudo enviar la solicitud');
+    } finally {
+      setRequesting(false);
     }
   }
 
@@ -120,8 +141,20 @@ export default function Login() {
           </div>
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2.5 text-sm text-red-400">
-              {error}
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2.5 text-sm text-red-400 space-y-2.5">
+              <p>{error}</p>
+              {notInvited && (
+                <>
+                  <p className="text-xs text-red-400/70">
+                    El registro es solo por invitación. Podés pedir una y te avisamos.
+                  </p>
+                  <button type="button" onClick={handleRequestInvitation} disabled={requesting}
+                    className="w-full flex items-center justify-center gap-1.5 bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 disabled:opacity-50 text-red-200 rounded-lg py-2 text-xs font-semibold transition-colors">
+                    <MailPlus size={13} />
+                    {requesting ? 'Enviando…' : 'Solicitar invitación'}
+                  </button>
+                </>
+              )}
             </div>
           )}
           {info && (

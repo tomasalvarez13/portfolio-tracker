@@ -179,4 +179,69 @@ router.delete('/invitations/:id', async (req, res) => {
   }
 });
 
+// ── SOLICITUDES DE INVITACIÓN ─────────────────────────────────────────────────
+// Las crea el endpoint público POST /api/invite-requests. Aprobar una crea la
+// invitación correspondiente.
+
+// GET /api/admin/invite-requests
+router.get('/invite-requests', async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT id, email, name, message, status, created_at, resolved_at
+      FROM invitation_requests
+      ORDER BY (status = 'pending') DESC, created_at DESC
+    `);
+    res.json({ requests: rows });
+  } catch (e) {
+    console.error('[admin/invite-requests]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/invite-requests/:id/approve
+// Un solo statement para que marcar la solicitud y crear la invitación no puedan
+// quedar desfasados: el helper query() no abre transacciones.
+router.post('/invite-requests/:id/approve', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `WITH req AS (
+         UPDATE invitation_requests
+            SET status = 'approved', resolved_at = NOW()
+          WHERE id = $1 AND status = 'pending'
+         RETURNING email, name
+       )
+       INSERT INTO invitations (email, note)
+       SELECT email, COALESCE('Solicitud aprobada — ' || name, 'Solicitud aprobada')
+       FROM req
+       ON CONFLICT (email) DO UPDATE SET note = EXCLUDED.note
+       RETURNING *`,
+      [req.params.id]
+    );
+    if (!rows[0]) {
+      return res.status(409).json({ error: 'La solicitud no existe o ya fue resuelta' });
+    }
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    console.error('[admin/invite-requests:approve]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/invite-requests/:id/reject
+router.post('/invite-requests/:id/reject', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `UPDATE invitation_requests SET status = 'rejected', resolved_at = NOW()
+        WHERE id = $1 AND status = 'pending' RETURNING *`,
+      [req.params.id]
+    );
+    if (!rows[0]) {
+      return res.status(409).json({ error: 'La solicitud no existe o ya fue resuelta' });
+    }
+    res.json(rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

@@ -70,6 +70,14 @@ export const getAdminUsers   = ()     => api.get('/admin/users').then(r => r.dat
 export const getAdminStats   = ()     => api.get('/admin/stats').then(r => r.data);
 export const deleteAdminUser = (id)   => api.delete(`/admin/users/${id}`);
 
+// --- Solicitud de invitación (público, sin sesión) ---
+export const requestInvitation = (body) => api.post('/invite-requests', body).then(r => r.data);
+
+// --- Solicitudes en el panel admin ---
+export const getInviteRequests     = ()   => api.get('/admin/invite-requests').then(r => r.data);
+export const approveInviteRequest  = (id) => api.post(`/admin/invite-requests/${id}/approve`).then(r => r.data);
+export const rejectInviteRequest   = (id) => api.post(`/admin/invite-requests/${id}/reject`).then(r => r.data);
+
 // --- Invitaciones de registro ---
 export const getInvitations   = ()      => api.get('/admin/invitations').then(r => r.data);
 export const createInvitation = (body)  => api.post('/admin/invitations', body).then(r => r.data);
