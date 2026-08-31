@@ -9,6 +9,16 @@ import { DEMO_USER } from './mode.js';
 const lastT = (s) => s.dates.length - 1;
 const todayISO = (s) => s.dates[lastT(s)];
 
+// El demo no modela custodios reales: expone la lista para que el selector del
+// form tenga qué mostrar, y todas las posiciones caen en el centinela.
+const DEMO_CUSTODIANS = [
+  { id: 0, slug: 'sin-custodio', name: 'Sin custodio', country: 'CL' },
+  { id: 1, slug: 'fintual',      name: 'Fintual',      country: 'CL' },
+  { id: 2, slug: 'racional',     name: 'Racional',     country: 'CL' },
+  { id: 3, slug: 'banchile',     name: 'Banchile Inversiones', country: 'CL' },
+  { id: 4, slug: 'buda',         name: 'Buda.com',     country: 'CL' },
+];
+
 // ── Lecturas derivadas ────────────────────────────────────────────────────────
 function buildPositions(s) {
   const t = lastT(s);
@@ -26,6 +36,7 @@ function buildPositions(s) {
     totalUsd += value_usd;
     positions.push({
       id: 1000 + inst.id, instrument_id: inst.id,
+      custodian_id: 0, custodian_name: 'Sin custodio',
       name: inst.name, alias: inst.alias, type: inst.type, ticker: inst.ticker,
       currency: inst.currency, api_source: inst.api_source,
       units: u, amount_clp: null, amount_usd: null,
@@ -313,6 +324,24 @@ export function handle({ method, path, params = {}, body = {} }) {
   const seg = path.replace(/^\/+|\/+$/g, '').split('/');
   const [a, b, c] = seg;
   const m = method.toLowerCase();
+
+  // ── custodians ──
+  if (a === 'custodians') {
+    if (m === 'get' && !b) return ok(DEMO_CUSTODIANS);
+    if (m === 'post') {
+      const name = String(body?.name || '').trim();
+      if (name.length < 2) return bad('El nombre debe tener entre 2 y 80 caracteres');
+      const existing = DEMO_CUSTODIANS.find((c) => c.name.toLowerCase() === name.toLowerCase());
+      if (existing) return { status: 201, data: existing };
+      const created = {
+        id: Math.max(...DEMO_CUSTODIANS.map((c) => c.id)) + 1,
+        slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        name, country: 'CL',
+      };
+      DEMO_CUSTODIANS.push(created);
+      return { status: 201, data: created };
+    }
+  }
 
   // ── instruments ──
   if (a === 'instruments') {

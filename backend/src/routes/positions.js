@@ -1,109 +1,167 @@
-// CRUD de posiciones del usuario autenticado, con valor actual calculado.
+// Posiciones del usuario autenticado.
+//
+// `positions` ya no se escribe directo: es una caché derivada de `transactions`.
+// Todo lo que antes era un UPDATE acá ahora es un evento en el ledger seguido de
+// un rebuild. Ver services/ledgerService.js.
 import { Router } from 'express';
-import { query } from '../config/db.js';
 import { computePositions, computeAndSaveSnapshot } from '../services/portfolioService.js';
+import {
+  NO_CUSTODIAN, setBalance, recordMovement, closePosition, resolvePosition,
+} from '../services/ledgerService.js';
 
 const router = Router();
 
-// GET /api/positions  -> posiciones con valor actual, % portafolio, fecha de precio
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+/** Refresca el snapshot del día para que el resumen refleje el cambio al toque. */
+async function refreshSnapshot(userId, date) {
+  try { await computeAndSaveSnapshot(userId, date); } catch { /* no bloquear la respuesta */ }
+}
+
+// GET /api/positions
 router.get('/', async (req, res) => {
-  const data = await computePositions(req.user.id);
-  res.json(data);
+  res.json(await computePositions(req.user.id));
 });
 
-// POST /api/positions  { instrument_id, units? , amount_clp?, amount_usd?, notes? }
+// POST /api/positions  { instrument_id, custodian_id?, units? | amount_clp? | amount_usd?, date?, notes? }
+//
+// Declarar una posición es declarar un SALDO: "tengo X unidades de este activo
+// en este custodio". Repetirlo el mismo día corrige el saldo en vez de sumarlo.
 router.post('/', async (req, res) => {
-  const { instrument_id, units, amount_clp, amount_usd, notes } = req.body;
+  const { instrument_id, custodian_id, units, amount_clp, amount_usd, date, notes } = req.body;
+
   if (!instrument_id) return res.status(400).json({ error: 'instrument_id es obligatorio' });
   if (units == null && amount_clp == null && amount_usd == null) {
     return res.status(400).json({ error: 'Indica units, amount_clp o amount_usd' });
   }
+
+  const when = date || todayISO();
   try {
-    const { rows } = await query(
-      `INSERT INTO positions (user_id, instrument_id, units, amount_clp, amount_usd, notes)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (user_id, instrument_id)
-       DO UPDATE SET units=$3, amount_clp=$4, amount_usd=$5, notes=$6, updated_at=NOW()
-       RETURNING *`,
-      [req.user.id, instrument_id, units ?? null, amount_clp ?? null, amount_usd ?? null, notes ?? null]
+    await setBalance({
+      userId:       req.user.id,
+      custodianId:  custodian_id ?? NO_CUSTODIAN,
+      instrumentId: instrument_id,
+      date:         when,
+      units:        units      ?? null,
+      amountClp:    amount_clp ?? null,
+      amountUsd:    amount_usd ?? null,
+      notes:        notes      ?? null,
+      supersede:    true,
+    });
+    await refreshSnapshot(req.user.id, when);
+
+    const { positions } = await computePositions(req.user.id);
+    const created = positions.find(
+      (p) => p.instrument_id === Number(instrument_id)
+        && p.custodian_id === (custodian_id ?? NO_CUSTODIAN)
     );
-    // Actualizar snapshot del día para que el gráfico refleje el cambio inmediatamente
-    const today = new Date().toISOString().slice(0, 10);
-    try { await computeAndSaveSnapshot(req.user.id, today); } catch {}
-    res.status(201).json(rows[0]);
+    res.status(201).json(created || null);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-// PUT /api/positions/:id
+// PUT /api/positions/:id  -> corrige el saldo de una posición existente
 router.put('/:id', async (req, res) => {
-  const { units, amount_clp, amount_usd, notes } = req.body;
-  const { rows } = await query(
-    `UPDATE positions SET units=$3, amount_clp=$4, amount_usd=$5, notes=$6, updated_at=NOW()
-     WHERE id=$1 AND user_id=$2 RETURNING *`,
-    [req.params.id, req.user.id, units ?? null, amount_clp ?? null, amount_usd ?? null, notes ?? null]
-  );
-  if (!rows[0]) return res.status(404).json({ error: 'Posición no encontrada' });
-  const today = new Date().toISOString().slice(0, 10);
-  try { await computeAndSaveSnapshot(req.user.id, today); } catch {}
-  res.json(rows[0]);
+  const { units, amount_clp, amount_usd, date, notes } = req.body;
+
+  const pos = await resolvePosition(req.user.id, req.params.id);
+  if (!pos) return res.status(404).json({ error: 'Posición no encontrada' });
+
+  const when = date || todayISO();
+  try {
+    await setBalance({
+      userId:       req.user.id,
+      custodianId:  pos.custodian_id,
+      instrumentId: pos.instrument_id,
+      date:         when,
+      units:        units      ?? null,
+      amountClp:    amount_clp ?? null,
+      amountUsd:    amount_usd ?? null,
+      notes:        notes      ?? null,
+      supersede:    true,
+    });
+    await refreshSnapshot(req.user.id, when);
+
+    const updated = await resolvePosition(req.user.id, req.params.id);
+    res.json(updated);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
-// POST /api/positions/:id/aporte — suma (aporte) o resta (retiro) un delta y registra el movimiento.
+// POST /api/positions/:id/aporte
+// { delta_units? | delta_amount_clp? | delta_amount_usd?, movement_clp?, date?, notes?, type }
+//
+// Un delta sobre la posición. A diferencia de antes, el movimiento se guarda CON
+// su instrument_id y su custodian_id: sin eso no hay rentabilidad por activo ni
+// por custodio, porque no hay flujos atribuibles a cada bucket.
 router.post('/:id/aporte', async (req, res) => {
-  const { delta_units, delta_amount_clp, delta_amount_usd, movement_clp, date, notes, type = 'aporte' } = req.body;
+  const {
+    delta_units, delta_amount_clp, delta_amount_usd,
+    movement_clp, date, notes, type = 'aporte',
+  } = req.body;
+
   if (!['aporte', 'retiro'].includes(type)) {
     return res.status(400).json({ error: "type debe ser 'aporte' o 'retiro'" });
   }
-  const sign = type === 'retiro' ? -1 : 1;
-
-  const { rows: [pos] } = await query(
-    'SELECT * FROM positions WHERE id=$1 AND user_id=$2',
-    [req.params.id, req.user.id]
-  );
-  if (!pos) return res.status(404).json({ error: 'Posición no encontrada' });
-
   if (delta_units == null && delta_amount_clp == null && delta_amount_usd == null) {
     return res.status(400).json({ error: 'Indica delta_units, delta_amount_clp o delta_amount_usd' });
   }
 
-  const newUnits      = delta_units      != null ? Number(pos.units      || 0) + sign * Number(delta_units)      : pos.units;
-  const newAmountClp  = delta_amount_clp != null ? Number(pos.amount_clp || 0) + sign * Number(delta_amount_clp) : pos.amount_clp;
-  const newAmountUsd  = delta_amount_usd != null ? Number(pos.amount_usd || 0) + sign * Number(delta_amount_usd) : pos.amount_usd;
+  const pos = await resolvePosition(req.user.id, req.params.id);
+  if (!pos) return res.status(404).json({ error: 'Posición no encontrada' });
 
-  const { rows: [updatedPos] } = await query(
-    `UPDATE positions SET units=$3, amount_clp=$4, amount_usd=$5, updated_at=NOW()
-     WHERE id=$1 AND user_id=$2 RETURNING *`,
-    [req.params.id, req.user.id, newUnits, newAmountClp, newAmountUsd]
-  );
+  const when = date || todayISO();
 
-  // El monto CLP del movimiento: si el delta ya es CLP lo usamos directamente; si no, el frontend lo provee.
-  const clpForMovement = delta_amount_clp != null ? Number(delta_amount_clp) : (movement_clp != null ? Number(movement_clp) : null);
-  const movDate = date || new Date().toISOString().slice(0, 10);
-  let movement = null;
-  if (clpForMovement != null) {
-    const { rows: [mov] } = await query(
-      `INSERT INTO movements (user_id, instrument_id, date, type, amount_clp, notes)
-       VALUES ($1, NULL, $2, $3, $4, $5) RETURNING *`,
-      [req.user.id, movDate, type, clpForMovement, notes ?? null]
-    );
-    movement = mov;
+  // El monto CLP del movimiento: si el delta ya viene en CLP lo usamos; si no,
+  // el frontend manda su equivalente para que el historial de aportes cuadre.
+  const clpForMovement = delta_amount_clp != null
+    ? Number(delta_amount_clp)
+    : (movement_clp != null ? Number(movement_clp) : null);
+
+  try {
+    const movement = await recordMovement({
+      userId:       req.user.id,
+      custodianId:  pos.custodian_id,
+      instrumentId: pos.instrument_id,
+      date:         when,
+      kind:         type,
+      units:        delta_units      != null ? Number(delta_units)      : null,
+      amountClp:    clpForMovement,
+      amountUsd:    delta_amount_usd != null ? Number(delta_amount_usd) : null,
+      notes:        notes ?? null,
+    });
+    await refreshSnapshot(req.user.id, when);
+
+    const position = await resolvePosition(req.user.id, req.params.id);
+    res.status(201).json({ position, movement });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
-  // Siempre recalcular snapshot para reflejar el cambio de posición en el resumen.
-  try { await computeAndSaveSnapshot(req.user.id, movDate); } catch {}
-
-  res.status(201).json({ position: updatedPos, movement });
 });
 
 // DELETE /api/positions/:id
+//
+// Cierra la posición declarando saldo cero. La fila de `positions` desaparece,
+// pero el historial queda en el ledger — que es justamente para lo que está.
 router.delete('/:id', async (req, res) => {
-  const { rowCount } = await query(
-    'DELETE FROM positions WHERE id=$1 AND user_id=$2',
-    [req.params.id, req.user.id]
-  );
-  if (!rowCount) return res.status(404).json({ error: 'Posición no encontrada' });
-  res.status(204).end();
+  const pos = await resolvePosition(req.user.id, req.params.id);
+  if (!pos) return res.status(404).json({ error: 'Posición no encontrada' });
+
+  const when = todayISO();
+  try {
+    await closePosition({
+      userId:       req.user.id,
+      custodianId:  pos.custodian_id,
+      instrumentId: pos.instrument_id,
+      date:         when,
+    });
+    await refreshSnapshot(req.user.id, when);
+    res.status(204).end();
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 export default router;
