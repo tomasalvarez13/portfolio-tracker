@@ -32,6 +32,9 @@ const {
 const { computePositions } = await import('../src/services/portfolioService.js');
 
 const U = '11111111-1111-1111-1111-111111111111';
+// Sufijo por corrida: el bloque de mover custodio crea su propio activo, y sin
+// aislarlo la segunda corrida encuentra unidades acumuladas de la primera.
+const RUN = String(process.hrtime.bigint()).slice(-9);
 let fails = 0;
 const check = (name, got, want) => {
   const ok = String(got) === String(want);
@@ -121,7 +124,12 @@ try {
   check('tras borrar el movimiento', after, before);
 
   console.log('\n— mover una posición de custodio conserva el ledger');
-  const inst3 = await instId('COPX');
+  // Activo propio del test: mover es destructivo sobre el origen, así que no
+  // puede operar sobre uno del seed que otros bloques o corridas también usan.
+  const inst3 = (await query(
+    `INSERT INTO instruments (name, type, currency, api_source, status)
+     VALUES ($1,'stock_us','USD','manual','active') RETURNING id`,
+    [`Mover custodio ${RUN}`])).rows[0].id;
   await setBalance({ userId: U, custodianId: 0, instrumentId: inst3, date: today, units: 80, supersede: true });
   await recordMovement({ userId: U, custodianId: 0, instrumentId: inst3, date: today, kind: 'aporte', units: 20, amountClp: 50000 });
   const antesMov = Number((await query(
@@ -169,6 +177,10 @@ try {
   console.error('\nERROR:', e.message, '\n', e.stack?.split('\n').slice(0,4).join('\n'));
   fails++;
 } finally {
+  // El bloque de mover custodio crea un activo propio: sin limpiarlo, la
+  // corrida siguiente encuentra unidades acumuladas en el destino.
+  try { await query(`DELETE FROM instruments WHERE name LIKE 'Mover custodio %'`); }
+  catch (e) { console.error('(limpieza falló:', e.message, ')'); }
   await pool.end();
   process.exit(fails === 0 ? 0 : 1);
 }
