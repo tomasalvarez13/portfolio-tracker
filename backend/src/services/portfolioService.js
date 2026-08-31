@@ -2,6 +2,7 @@
 // resumen del día y cálculo de rentabilidad (total y sobre lo invertido).
 
 import { query } from '../config/db.js';
+import { computeTWRFromSeries } from './analyticsService.js';
 import { todayCL } from '../utils/dates.js';
 
 
@@ -443,53 +444,27 @@ export async function computeTWR(userId, from, to) {
     [userId, from, to]
   );
 
-  // 3. Construir sub-períodos por cada movimiento
-  // Para cada movimiento en fecha D:
-  //   - V_end = valor del snapshot en D-1 (último antes del aporte)
-  //   - sub-período: [V_start ... V_end]
-  //   - V_start del siguiente sub-período = V_end + signo*monto
-  //
-  // Si no hay snapshot exacto en D-1, se usa el snapshot más cercano <= D-1.
-  const snapByDate = new Map(snapshots.map((s) => [s.date, s.total_clp]));
-  const sortedDates = snapshots.map((s) => s.date);
-
-  function snapBefore(date) {
-    let best = null;
-    for (const d of sortedDates) {
-      if (d < date) best = d;
-      else break;
-    }
-    return best ? { date: best, value: snapByDate.get(best) } : null;
-  }
-
-  const subPeriods = [];
-  let cursorValue = snapshots[0].total_clp;
-  let cursorDate = snapshots[0].date;
-
+  // 3. La serie de puntos con su flujo del día, que es lo que necesita el TWR.
+  //    Antes esto armaba los sub-períodos a mano acá; ahora el cálculo vive en
+  //    computeTWRFromSeries y lo comparten los tres niveles: portafolio,
+  //    custodio y activo.
+  const flujoPorFecha = new Map();
   for (const m of movs) {
-    const movDate = toISODate(m.date);
-    const before = snapBefore(movDate);
-    if (!before || before.date < cursorDate) continue;
-    const vEnd = Number(before.value);
-    const r = cursorValue > 0 ? (vEnd / cursorValue) - 1 : 0;
-    subPeriods.push({ from: cursorDate, to: before.date, r });
-    // Después del movimiento, el portafolio "vale" vEnd + signo*monto
+    const d = toISODate(m.date);
     const signo = m.type === 'aporte' ? 1 : -1;
-    cursorValue = vEnd + signo * Number(m.amount_clp);
-    cursorDate = movDate;
+    flujoPorFecha.set(d, (flujoPorFecha.get(d) || 0) + signo * Number(m.amount_clp));
   }
 
-  // Sub-período final hasta el último snapshot
+  const puntos = snapshots.map((s) => ({
+    date: s.date,
+    value: s.total_clp,
+    flow: flujoPorFecha.get(s.date) || 0,
+  }));
+
+  const r = computeTWRFromSeries(puntos);
+  const twr = r.twr_pct != null ? r.twr_pct / 100 : 0;
+  const subPeriods = { length: r.sub_periodos };
   const last = snapshots[snapshots.length - 1];
-  if (last.date > cursorDate) {
-    const r = cursorValue > 0 ? (last.total_clp / cursorValue) - 1 : 0;
-    subPeriods.push({ from: cursorDate, to: last.date, r });
-  }
-
-  // 4. TWR = producto de (1+r_i) - 1
-  let twr = 1;
-  for (const sp of subPeriods) twr *= (1 + sp.r);
-  twr -= 1;
 
   const aportesClp = movs.filter((m) => m.type === 'aporte').reduce((s, m) => s + Number(m.amount_clp), 0);
   const retirosClp = movs.filter((m) => m.type === 'retiro').reduce((s, m) => s + Number(m.amount_clp), 0);

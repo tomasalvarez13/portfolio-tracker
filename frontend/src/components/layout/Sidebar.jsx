@@ -8,6 +8,7 @@ import {
   LineChart,
   ArrowLeftRight,
   MessageSquare,
+  PieChart,
   LogOut,
 } from 'lucide-react';
 
@@ -16,6 +17,7 @@ const NAV = [
   { to: '/app/posiciones',   label: 'Posiciones',   Icon: Layers          },
   { to: '/app/movimientos',  label: 'Movimientos',  Icon: ArrowLeftRight  },
   { to: '/app/rentabilidad', label: 'Rentabilidad', Icon: TrendingUp      },
+  { to: '/app/analisis',     label: 'Análisis',     Icon: PieChart        },
   { to: '/app/mercado',      label: 'Mercado',      Icon: LineChart       },
   { to: '/app/chat',         label: 'Chat IA',      Icon: MessageSquare   },
 ];

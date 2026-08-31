@@ -603,6 +603,95 @@ export function handle({ method, path, params = {}, body = {} }) {
     }
   }
 
+  // ── analytics ──
+  // Reconstruye la misma vista que el backend a partir de unitsByDay y los
+  // precios sintéticos. Los flujos se derivan igual que en producción: del
+  // cambio de unidades entre días, porque el precio mueve el valor y no las
+  // unidades.
+  if (a === 'analytics') {
+    const rango = () => {
+      const from = params.from || s.dates[0];
+      const to   = params.to   || todayISO(s);
+      return { from, to };
+    };
+    const disponible = { desde: s.dates[0], hasta: todayISO(s), dias: s.dates.length };
+
+    if (m === 'get' && b === 'range') return ok(disponible);
+
+    if (m === 'get' && (b === 'by-custodian' || b === 'by-instrument')) {
+      const { from, to } = rango();
+      const idx = s.dates.map((d, t) => ({ d, t })).filter((x) => x.d >= from && x.d <= to);
+      if (idx.length === 0) return ok({ from, to, buckets: [], total_final_clp: 0, disponible });
+
+      // Serie por activo: valor, unidades y flujo derivado.
+      const porActivo = s.instruments.map((inst) => {
+        const serie = idx.map(({ d, t }, k) => {
+          const u = s.unitsByDay[t][inst.id];
+          if (u == null) return null;
+          const precio = s.priceClp[inst.id][t];
+          const prevT = k === 0 ? null : idx[k - 1].t;
+          const uPrev = prevT == null ? null : s.unitsByDay[prevT][inst.id];
+          const flow = (k === 0 || uPrev == null) ? 0 : (u - uPrev) * precio;
+          return { date: d, value_clp: u * precio, flow_clp: flow };
+        }).filter(Boolean);
+        return { inst, serie };
+      }).filter((x) => x.serie.length > 0);
+
+      const twr = (serie) => {
+        let acc = 1, usados = 0;
+        for (let i = 1; i < serie.length; i++) {
+          const vPrev = serie[i - 1].value_clp;
+          if (!(vPrev > 0)) continue;
+          acc *= 1 + ((serie[i].value_clp - serie[i].flow_clp) / vPrev - 1);
+          usados++;
+        }
+        return usados > 0 ? (acc - 1) * 100 : null;
+      };
+
+      // El demo no modela custodios reales: reparte los activos de forma
+      // determinista para que la vista por custodio tenga algo que mostrar.
+      const custodioDe = (id) => DEMO_CUSTODIANS[1 + (id % 3)];
+
+      const grupos = new Map();
+      for (const { inst, serie } of porActivo) {
+        const key = b === 'by-instrument' ? `i${inst.id}` : `c${custodioDe(inst.id).id}`;
+        const label = b === 'by-instrument' ? (inst.alias || inst.name) : custodioDe(inst.id).name;
+        if (!grupos.has(key)) grupos.set(key, { key, label, inst, porFecha: new Map() });
+        const g = grupos.get(key);
+        for (const p of serie) {
+          const cur = g.porFecha.get(p.date) || { date: p.date, value_clp: 0, flow_clp: 0 };
+          cur.value_clp += p.value_clp;
+          cur.flow_clp  += p.flow_clp;
+          g.porFecha.set(p.date, cur);
+        }
+      }
+
+      const buckets = [...grupos.values()].map((g) => {
+        const serie = [...g.porFecha.values()].sort((x, y) => (x.date < y.date ? -1 : 1));
+        return {
+          key: g.key,
+          label: g.label,
+          ...(b === 'by-instrument' ? { type: g.inst.type, ticker: g.inst.ticker } : {}),
+          valor_inicial_clp: serie[0].value_clp,
+          valor_final_clp:   serie[serie.length - 1].value_clp,
+          aportes_clp: serie.reduce((acc, p) => acc + (p.flow_clp > 0 ?  p.flow_clp : 0), 0),
+          retiros_clp: serie.reduce((acc, p) => acc + (p.flow_clp < 0 ? -p.flow_clp : 0), 0),
+          twr_pct: twr(serie),
+          flujos_estimados: true,
+          dias_stale: 0,
+          dias: serie.length,
+          serie,
+        };
+      }).sort((x, y) => y.valor_final_clp - x.valor_final_clp);
+
+      return ok({
+        from, to, buckets,
+        total_final_clp: buckets.reduce((acc, x) => acc + x.valor_final_clp, 0),
+        disponible,
+      });
+    }
+  }
+
   // ── market ──
   if (a === 'market' && m === 'get') return ok(market(s));
 
