@@ -8,6 +8,7 @@ import Login from './pages/Login.jsx';
 import Posiciones from './pages/Posiciones.jsx';
 import Resumen from './pages/Resumen.jsx';
 import Rentabilidad from './pages/Rentabilidad.jsx';
+import Analisis from './pages/Analisis.jsx';
 import Mercado from './pages/Mercado.jsx';
 import Movimientos from './pages/Movimientos.jsx';
 import Chat from './pages/Chat.jsx';
@@ -59,6 +60,7 @@ export default function App() {
         <Route path="posiciones"   element={<Posiciones />} />
         <Route path="movimientos"  element={<Movimientos />} />
         <Route path="rentabilidad" element={<Rentabilidad />} />
+        <Route path="analisis"     element={<Analisis />} />
         <Route path="mercado"      element={<Mercado />} />
         <Route path="chat"         element={<Chat />} />
       </Route>

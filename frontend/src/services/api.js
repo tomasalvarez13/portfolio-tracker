@@ -63,6 +63,11 @@ export const getMonthlyRentabilidad = (params) =>
 export const getTWR = (params) =>
   api.get('/portfolio/twr', { params }).then((r) => r.data);
 
+// --- Análisis (por custodio y por activo) ---
+export const getAnalyticsByCustodian  = (params) => api.get('/analytics/by-custodian',  { params }).then((r) => r.data);
+export const getAnalyticsByInstrument = (params) => api.get('/analytics/by-instrument', { params }).then((r) => r.data);
+export const getAnalyticsRange        = ()       => api.get('/analytics/range').then((r) => r.data);
+
 // --- Mercado ---
 export const getMarket = () => api.get('/market').then((r) => r.data);
 

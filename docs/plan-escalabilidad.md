@@ -1,7 +1,8 @@
 # Plan de escalabilidad
 
-Estado: **Fase 1, §3.3, §3.1 y §2a en producción. §3.4 implementada.**
-Siguiente: §2b (postergable) o la Fase 3. · Última actualización: 2026-08-31
+Estado: **Todo en producción salvo §2b.** La Fase 3 —las vistas por custodio y
+por activo, que motivaron el plan— está implementada. · Última actualización:
+2026-08-31
 
 | Fase | Estado | Rama |
 |---|---|---|
@@ -10,8 +11,8 @@ Siguiente: §2b (postergable) o la Fase 3. · Última actualización: 2026-08-31
 | 3.1 — Cartola → maestro | ✅ implementada, falta aplicar migración 004 | `feat/fase-2-cartola` |
 | 2a — Cron por cola | ✅ implementada, falta aplicar migración 005 | `feat/fase-2a-cron` |
 | 3.4 — Mantenedor admin | ✅ implementada, falta aplicar migración 006 | `feat/fase-2c-admin` |
-| 2b — Cascada de fuentes | ⏭ siguiente (postergable) | `feat/fase-2b-fuentes` |
-| 3 — Vistas por custodio y activo | pendiente | `feat/fase-3-analytics` |
+| 2b — Cascada de fuentes | ⏭ lo único que queda del plan | `feat/fase-2b-fuentes` |
+| 3 — Vistas por custodio y activo | ✅ implementada, sin migración | `feat/fase-3-analytics` |
 
 Una rama por fase, siempre saliendo de `main` actualizado.
 
@@ -688,9 +689,41 @@ Página "Análisis" con dos tabs (Custodio / Activo), reutilizando
 - barras de rentabilidad % del período
 - tabla ordenable: valor, % del portafolio, aportes, TWR
 
-- [ ] `computeTWRFromSeries(serie, flujos)` pura, refactor de `computeTWR`
-- [ ] Endpoints `by-custodian` y `by-instrument`
-- [ ] Página Análisis con los dos tabs
+- [x] `computeTWRFromSeries(puntos)` pura; `computeTWR` del portafolio la usa,
+      así el cálculo existe una sola vez para los tres niveles
+- [x] Endpoints `by-custodian`, `by-instrument` y `range`
+- [x] Página Análisis con los dos tabs, selector de rango y tabla ordenada
+- [x] Entrada en `Sidebar.jsx` y `BottomNav.jsx`
+- [x] `demo/server.js`: los tres endpoints, con la misma derivación de flujos
+- [x] `npm run verify:analytics` — 31 aserciones
+
+#### Los flujos se derivan de las unidades, no de `movements`
+
+Este es el cambio de diseño de la fase, y es lo que la hace funcionar.
+
+El TWR necesita separar la plata que entró y salió de lo que se movió por
+precio. A nivel portafolio eso sale de `movements`, porque el usuario los
+registra. **Por bucket no alcanza:** si alguien solo sube cartolas y nunca anota
+un aporte, cada saldo nuevo mezcla las dos cosas y todo el cambio parecería
+rentabilidad.
+
+La salida es que **el precio mueve el valor, no las unidades**. Entre dos días,
+un cambio de unidades solo puede venir de un aporte, un retiro, una compra o una
+venta:
+
+```
+flujo(D) = (unidades(D) − unidades(D−1)) × precio(D)
+```
+
+Eso se calcula desde `position_snapshots` sin depender de que el usuario haya
+registrado nada, y funciona igual si la posición entró por cartola o a mano. El
+flujo se deriva al grano `(custodio, activo)` —donde las unidades son
+comparables— y recién después se suma al nivel del bucket.
+
+**La excepción** son las posiciones cargadas por monto: ahí un cambio de valor
+puede ser precio o aporte y no hay forma de saberlo. Esos buckets devuelven
+`twr_pct: null` con `flujos_estimados: false`, y la UI muestra "—" con la
+explicación. Un número inventado sería peor que ninguno.
 - [ ] Entrada en `Sidebar.jsx` y `BottomNav.jsx`
 
 ---
@@ -912,12 +945,12 @@ mostrarse.
 Arranca cerrando un agujero real: `/api/instruments` acepta escrituras de
 cualquier usuario autenticado, y su `DELETE` cascadea a las posiciones de todos.
 
-### 5. §3.2b / Fase 2b — Cascada de fuentes ← siguiente, y postergable
+### 5. §3.2b / Fase 2b — Cascada de fuentes ← lo único que queda
 
 Postergable sin costo. Hasta que exista, los activos sin fuente siguen en
 `manual`, que es lo que ya se hace hoy.
 
-### 6. §4 / Fase 3 — Vistas por custodio y por activo
+### 6. §4 / Fase 3 — Vistas por custodio y por activo ✅
 
 Necesita profundidad en `position_snapshots`, así que gana con cada semana que
 pase desde el punto 1.
@@ -927,6 +960,18 @@ pase desde el punto 1.
 ## 8. Pendientes sueltos
 
 Cosas que no son de ninguna fase pero conviene no perder:
+
+- **Los fetchers de CMF y SP no aceptan fecha objetivo.** Bajan una ventana de
+  días y devuelven siempre la fila más reciente, así que un job que pide una
+  fecha puntual —el relleno de huecos— nunca se puede satisfacer: queda en
+  `no_data`, se reintenta hasta agotar los 4 intentos, y esa fecha se queda
+  stale. Lo irónico es que el dato está: `fetchFondoCmf` ya descarga 10 días y
+  descarta todas las filas menos la última. Va con §2b, que es el mismo
+  territorio.
+- **`CFMLVENFR` no registra precio desde julio.** Yahoo devuelve su última
+  operación real, así que marca `no_data` todos los días. Si es ilíquido de
+  verdad, corresponde reconocerlo con un rezago propio en vez de tratarlo como
+  un hueco.
 
 - ~~`/api/instruments` abierto a cualquier usuario autenticado~~ — cerrado en §3.4.
 - **`instruments.canonical_id` y `custodians.canonical_id` ya tienen UI** (§3.4),
