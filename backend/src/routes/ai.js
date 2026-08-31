@@ -4,6 +4,8 @@ import multer from 'multer';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { query } from '../config/db.js';
 import { computePositions } from '../services/portfolioService.js';
+import { parseCartolaFile } from '../services/cartolaParser.js';
+import { matchCandidates } from '../services/statementService.js';
 
 const router = Router();
 
@@ -34,48 +36,34 @@ function toGeminiContents(messages) {
 }
 
 // ─── POST /api/ai/parse-cartola ───────────────────────────────────────────────
+//
+// DEPRECADO en favor de POST /api/statements, que además guarda la cartola, le
+// asigna custodio y confirma todo en una transacción.
+//
+// Se mantiene porque el modo demo y cualquier frontend viejo todavía lo llaman.
+// La diferencia importante: el prompt ya no lleva el maestro de instrumentos —
+// el matching pasó a SQL con trigramas— así que el costo por cartola dejó de
+// crecer con el tamaño del maestro. El `instrument_id` que devuelve es el mejor
+// candidato de match_instruments, para no romper el contrato viejo.
 router.post('/parse-cartola', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No se recibió archivo. Enviá un PDF o imagen.' });
 
   try {
-    const genAI = getClient();
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const parsed = await parseCartolaFile(req.file.buffer, req.file.mimetype);
 
-    const { rows: instruments } = await query(
-      'SELECT id, name, alias, ticker, type FROM instruments ORDER BY name'
-    );
+    const proposals = await Promise.all(parsed.rows.map(async (r) => {
+      const [best] = await matchCandidates(req.user.id, r.instrument_name, 1);
+      return {
+        instrument_name: r.instrument_name,
+        instrument_id:   best?.id ?? null,
+        units:           r.units,
+        amount_clp:      r.amount_clp,
+        amount_usd:      r.amount_usd,
+        notes:           r.notes,
+      };
+    }));
 
-    const base64 = req.file.buffer.toString('base64');
-    const mime   = req.file.mimetype;
-
-    const prompt = `Analizá este documento financiero y extraé todas las posiciones de inversión que encuentres.
-
-Instrumentos disponibles en el sistema (intentá hacer coincidir por nombre o ticker):
-${JSON.stringify(instruments.map(i => ({ id: i.id, name: i.alias || i.name, ticker: i.ticker })))}
-
-Para cada posición devolvé un objeto con estos campos (omitir los que no correspondan):
-- instrument_name: nombre tal como aparece en el documento
-- instrument_id: id del instrumento del sistema si encontrás coincidencia clara
-- units: número de cuotas o unidades (si la posición es en unidades)
-- amount_clp: monto en pesos chilenos como número entero (si es en CLP)
-- amount_usd: monto en dólares como número (si es en USD)
-- notes: observación útil (ej: "Fondo Serie A", fecha de valorización)
-
-Respondé ÚNICAMENTE con un array JSON válido, sin texto adicional, sin bloques markdown.`;
-
-    const result = await model.generateContent([
-      { inlineData: { mimeType: mime, data: base64 } },
-      { text: prompt },
-    ]);
-
-    const text = result.response.text().trim();
-    // Gemini a veces envuelve en ```json ... ```, limpiar por las dudas
-    const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-
-    let proposals = [];
-    try { proposals = JSON.parse(clean); } catch { proposals = []; }
-
-    res.json({ proposals });
+    res.json({ proposals, statement_date: parsed.statement_date, deprecated: 'Usá POST /api/statements' });
   } catch (e) {
     console.error('[ai/parse-cartola]', e.message);
     res.status(500).json({ error: e.message });

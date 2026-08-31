@@ -244,4 +244,99 @@ router.post('/invite-requests/:id/reject', async (req, res) => {
   }
 });
 
+// ── MAESTRO DE ACTIVOS ────────────────────────────────────────────────────────
+// Cola de activos que entraron por cartola y todavía no tienen fuente de datos.
+// Mientras están en pending_mapping solo los ve su creador; al mapearlos pasan a
+// ser globales y el cron los empieza a actualizar al día siguiente.
+
+const VALID_TYPES   = ['stock_us', 'stock_cl', 'crypto', 'fondo_mutuo_cl', 'afp'];
+const VALID_SOURCES = ['alpha_vantage', 'coingecko', 'cmf', 'sp', 'manual', 'yahoo_finance'];
+
+// GET /api/admin/instruments/pending
+router.get('/instruments/pending', async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT i.id, i.name, i.type, i.currency, i.status, i.meta, i.created_at,
+             u.email AS created_by_email,
+             (SELECT count(*) FROM positions p WHERE p.instrument_id = i.id) AS positions_count,
+             (SELECT count(*) FROM transactions t WHERE t.instrument_id = i.id) AS tx_count
+      FROM instruments i
+      LEFT JOIN users u ON u.id = i.created_by
+      WHERE i.status = 'pending_mapping' AND i.canonical_id IS NULL
+      ORDER BY i.created_at DESC
+    `);
+    res.json({ instruments: rows });
+  } catch (e) {
+    console.error('[admin/instruments/pending]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/admin/instruments/:id/map  { type, currency, api_source, external_id?, ticker?, meta? }
+// Le asigna fuente de datos y lo activa. Desde el día siguiente entra al cron.
+router.put('/instruments/:id/map', async (req, res) => {
+  const { type, currency, api_source, external_id, ticker, meta, name } = req.body;
+
+  if (type && !VALID_TYPES.includes(type)) {
+    return res.status(400).json({ error: `type debe ser uno de: ${VALID_TYPES.join(', ')}` });
+  }
+  if (api_source && !VALID_SOURCES.includes(api_source)) {
+    return res.status(400).json({ error: `api_source debe ser uno de: ${VALID_SOURCES.join(', ')}` });
+  }
+
+  try {
+    const { rows } = await query(
+      `UPDATE instruments
+         SET name        = COALESCE($2, name),
+             type        = COALESCE($3, type),
+             currency    = COALESCE($4, currency),
+             api_source  = COALESCE($5, api_source),
+             external_id = COALESCE($6, external_id),
+             ticker      = COALESCE($7, ticker),
+             meta        = COALESCE($8, meta),
+             status      = 'active',
+             fetch_enabled = TRUE
+       WHERE id = $1 AND canonical_id IS NULL
+       RETURNING *`,
+      [req.params.id, name ?? null, type ?? null, currency ?? null, api_source ?? null,
+       external_id ?? null, ticker ?? null, meta ? JSON.stringify(meta) : null]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Instrumento no encontrado o ya fusionado' });
+    res.json(rows[0]);
+  } catch (e) {
+    // Los índices únicos parciales rechazan mapearlo a una fuente que ya existe:
+    // ese caso se resuelve fusionando, no mapeando.
+    if (e.code === '23505' || /duplicate key/i.test(e.message)) {
+      return res.status(409).json({
+        error: 'Ya existe un instrumento con esa fuente. Fusionalo en vez de mapearlo.',
+        detail: e.message,
+      });
+    }
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/instruments/:id/merge  { target_id }
+// Fusiona el activo en otro: repunta el ledger, suma la historia y reconstruye
+// las posiciones. El origen queda con canonical_id, no se borra.
+router.post('/instruments/:id/merge', async (req, res) => {
+  const targetId = Number(req.body?.target_id);
+  if (!targetId) return res.status(400).json({ error: 'target_id es obligatorio' });
+
+  try {
+    const { rows } = await query('SELECT * FROM merge_instruments($1, $2)', [req.params.id, targetId]);
+    res.json({ merged_into: targetId, ...rows[0] });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/instruments/search?q=  -> para elegir destino de una fusión
+router.get('/instruments/search', async (req, res) => {
+  const q = String(req.query?.q || '').trim();
+  if (q.length < 2) return res.json({ instruments: [] });
+  const { rows } = await query('SELECT * FROM match_instruments($1, NULL, 10)', [q]);
+  res.json({ instruments: rows });
+});
+
 export default router;

@@ -535,6 +535,74 @@ export function handle({ method, path, params = {}, body = {} }) {
     }
   }
 
+  // ── statements (cartolas) ──
+  // El demo no llama a ninguna IA: devuelve una propuesta sintética armada con
+  // los primeros instrumentos del dataset, ya con "candidatos" para que la
+  // pantalla de revisión se vea igual que en la app real.
+  if (a === 'statements') {
+    if (m === 'get' && !b) return ok(s.demoStatements || []);
+
+    if (m === 'post' && !b) {
+      const id = `demo-stmt-${(s.demoStatements?.length || 0) + 1}`;
+      const custodianId = body?.custodian_id != null && body.custodian_id !== ''
+        ? Number(body.custodian_id)
+        : 1; // Fintual
+      const fecha = todayISO(s);
+      const rows = s.instruments.slice(0, 3).map((i) => ({
+        instrument_name: i.name.toUpperCase(),
+        units: Number((10 + i.id * 3.5).toFixed(4)),
+        amount_clp: null,
+        amount_usd: null,
+        notes: 'Serie A',
+        candidates: [{
+          id: i.id, name: i.name, alias: i.alias, ticker: i.ticker,
+          type: i.type, currency: i.currency, status: 'active', similarity: 0.92,
+        }],
+      }));
+      const stmt = {
+        id, custodian_id: custodianId, statement_date: fecha, status: 'parsed',
+        file_name: 'cartola-demo.pdf', rows_proposed: rows.length,
+      };
+      s.demoStatements = [...(s.demoStatements || []), { ...stmt, rows }];
+      return { status: 201, data: {
+        statement: stmt,
+        custodian_suggestion: { id: 1, slug: 'fintual', name: 'Fintual' },
+        custodian_name_detectado: 'Fintual',
+        rows,
+      }};
+    }
+
+    const stmt = (s.demoStatements || []).find((x) => x.id === b);
+    if (!stmt) return nf('Cartola no encontrada');
+
+    if (m === 'get')  return ok({ statement: stmt, rows: stmt.rows });
+    if (m === 'put')  { Object.assign(stmt, body || {}); return ok(stmt); }
+    if (m === 'delete') {
+      s.demoStatements = s.demoStatements.filter((x) => x.id !== b);
+      return { status: 204, data: null };
+    }
+
+    if (m === 'post' && c === 'confirm') {
+      const t = lastT(s);
+      let applied = 0;
+      for (const r of body?.rows || []) {
+        const instId = Number(r.instrument_id);
+        if (!instId || !s.priceClp[instId]) continue;
+        // El demo modela todo por unidades: los montos se convierten al precio del día.
+        let units = r.units != null ? Number(r.units) : null;
+        if (units == null && r.amount_clp != null) units = Number(r.amount_clp) / s.priceClp[instId][t];
+        if (units == null && r.amount_usd != null) units = Number(r.amount_usd) / s.priceUsd[instId][t];
+        if (units == null || !Number.isFinite(units)) continue;
+        s.units[instId] = units;
+        applied++;
+      }
+      recomputeToday(s);
+      stmt.status = 'confirmed';
+      stmt.rows_confirmed = applied;
+      return ok({ statement_id: b, date: stmt.statement_date, applied, created: [] });
+    }
+  }
+
   // ── market ──
   if (a === 'market' && m === 'get') return ok(market(s));
 

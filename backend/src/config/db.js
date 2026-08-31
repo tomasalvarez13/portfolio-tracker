@@ -37,6 +37,34 @@ export async function query(text, params) {
   return res;
 }
 
+/**
+ * Corre `fn` dentro de una transacción, pasándole una función de query atada al
+ * mismo cliente del pool.
+ *
+ * Hace falta porque `query()` toma un cliente distinto del pool en cada llamada:
+ * un BEGIN por ahí no cubriría las llamadas siguientes. Confirmar una cartola
+ * son N escrituras que tienen que ser atómicas — si la fila 4 falla, las 3
+ * primeras no pueden quedar aplicadas.
+ *
+ * @param {(q: (text: string, params?: any[]) => Promise<any>) => Promise<T>} fn
+ * @returns {Promise<T>}
+ * @template T
+ */
+export async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn((text, params) => client.query(text, params));
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => { /* la conexión ya puede estar muerta */ });
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 // --- Cliente Supabase con SERVICE ROLE (bypassea RLS) ---
 // Úsalo solo en el backend para escribir precios/snapshots globales y tareas admin.
 export const supabaseAdmin = createClient(

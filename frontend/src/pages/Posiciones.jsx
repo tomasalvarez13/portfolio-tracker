@@ -196,7 +196,7 @@ export default function Posiciones() {
 
       {mode === 'cartola' && (
         <CartolaUpload
-          instruments={instruments}
+          custodians={custodians}
           onDone={() => { setMode(null); posHook.reload(); }}
           onCancel={() => setMode(null)}
         />
