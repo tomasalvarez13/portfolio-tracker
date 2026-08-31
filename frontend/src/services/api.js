@@ -28,6 +28,10 @@ export const createInstrument = (body) => api.post('/instruments', body).then((r
 export const updateInstrument = (id, body) => api.put(`/instruments/${id}`, body).then((r) => r.data);
 export const deleteInstrument = (id) => api.delete(`/instruments/${id}`);
 
+// --- Custodios ---
+export const getCustodians   = ()     => api.get('/custodians').then((r) => r.data);
+export const createCustodian = (body) => api.post('/custodians', body).then((r) => r.data);
+
 // --- Posiciones ---
 export const getPositions = () => api.get('/positions').then((r) => r.data);
 export const createPosition = (body) => api.post('/positions', body).then((r) => r.data);

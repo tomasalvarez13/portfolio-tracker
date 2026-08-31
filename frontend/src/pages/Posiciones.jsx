@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   getPositions, getInstruments, createPosition, updatePosition,
-  deletePosition, setManualPrice, refreshPrices, addAporte,
+  deletePosition, setManualPrice, refreshPrices, addAporte, getCustodians,
 } from '../services/api';
 import {
   formatCLP, formatUSD, formatPct, formatUnits, formatDate,
@@ -21,6 +21,7 @@ export default function Posiciones() {
   const { user } = useAuth();
   const posHook  = usePersistedFetch(`positions_${user?.id}`, getPositions);
   const instHook = usePersistedFetch(`instruments_${user?.id}`, getInstruments);
+  const custHook = usePersistedFetch(`custodians_${user?.id}`, getCustodians);
 
   // Tutorial: mostrar cuando no hay posiciones y no fue descartado
   const tutorialKey = user?.id ? `tutorial_dismissed_${user.id}` : null;
@@ -45,6 +46,7 @@ export default function Posiciones() {
 
   const data        = posHook.data;
   const instruments = instHook.data || [];
+  const custodians  = custHook.data || [];
   const positions   = data?.positions || [];
   const totalClp    = data?.totalClp || 0;
 
@@ -179,7 +181,7 @@ export default function Posiciones() {
       )}
 
       {mode === 'new' && (
-        <PositionForm instruments={instruments} initial={null}
+        <PositionForm instruments={instruments} custodians={custodians} initial={null}
           onSubmit={handleSave} onCancel={() => setMode(null)} />
       )}
 
@@ -202,7 +204,7 @@ export default function Posiciones() {
 
       {/* Editar posición existente (desde botón "editar" en la fila) */}
       {editing && (
-        <PositionForm instruments={instruments} initial={editing}
+        <PositionForm instruments={instruments} custodians={custodians} initial={editing}
           onSubmit={handleSave} onCancel={() => setEditing(null)} />
       )}
 
@@ -257,10 +259,15 @@ export default function Posiciones() {
                       </thead>
                       <tbody>
                         {g.items.map((p) => (
-                          <tr key={p.id} className="border-b border-bg-border/40 last:border-0 hover:bg-bg-hover/30">
+                          <tr key={`${p.id}-${p.custodian_id}`} className="border-b border-bg-border/40 last:border-0 hover:bg-bg-hover/30">
                             <td className="px-5 py-2.5">
                               <div className="font-medium">{p.alias || p.name}</div>
-                              {p.ticker && <div className="text-xs text-muted">{p.ticker}</div>}
+                              <div className="flex items-center gap-1.5 text-xs text-muted">
+                                {p.ticker && <span>{p.ticker}</span>}
+                                {p.custodian_id !== 0 && p.custodian_name && (
+                                  <span className="px-1.5 py-0.5 rounded bg-bg-hover">{p.custodian_name}</span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-4 py-2.5 text-right num">
                               {p.units != null ? formatUnits(p.units)

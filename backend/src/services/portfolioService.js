@@ -31,13 +31,15 @@ export async function computePositions(userId) {
   // Posiciones + instrumento + último precio (vía vista latest_prices)
   const { rows } = await query(
     `SELECT p.id, p.units, p.amount_clp, p.amount_usd, p.notes, p.updated_at,
+            p.custodian_id, c.name AS custodian_name,
             i.id AS instrument_id, i.name, i.alias, i.type, i.ticker, i.currency, i.api_source,
             lp.price_clp, lp.price_usd, lp.date AS price_date, lp.is_stale
      FROM positions p
      JOIN instruments i ON i.id = p.instrument_id
+     JOIN custodians  c ON c.id = p.custodian_id
      LEFT JOIN latest_prices lp ON lp.instrument_id = i.id
      WHERE p.user_id = $1
-     ORDER BY i.type, i.name`,
+     ORDER BY i.type, i.name, c.name`,
     [userId]
   );
 
@@ -75,6 +77,8 @@ export async function computePositions(userId) {
     return {
       id: r.id,
       instrument_id: r.instrument_id,
+      custodian_id: r.custodian_id,
+      custodian_name: r.custodian_name,
       name: r.name,
       alias: r.alias,
       type: r.type,

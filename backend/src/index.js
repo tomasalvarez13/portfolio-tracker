@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import { requireAuth, requireAdmin } from './config/auth.js';
 import instrumentsRouter from './routes/instruments.js';
 import positionsRouter from './routes/positions.js';
+import custodiansRouter from './routes/custodians.js';
 import movementsRouter from './routes/movements.js';
 import pricesRouter from './routes/prices.js';
 import pricesCronRouter from './routes/pricesCron.js';
@@ -45,6 +46,7 @@ app.use('/api/invite-requests', inviteRequestsRouter);
 // Rutas protegidas (requieren JWT de Supabase)
 app.use('/api/instruments', requireAuth, instrumentsRouter);
 app.use('/api/positions', requireAuth, positionsRouter);
+app.use('/api/custodians', requireAuth, custodiansRouter);
 app.use('/api/movements', requireAuth, movementsRouter);
 app.use('/api/prices', requireAuth, pricesRouter);
 app.use('/api/portfolio', requireAuth, portfolioRouter);
