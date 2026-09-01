@@ -973,10 +973,34 @@ Cosas que no son de ninguna fase pero conviene no perder:
   porque todo lo anterior a la Fase 1 quedó en el centinela, y cerrar y recrear
   la posición partía su historial en dos buckets justo cuando las vistas de la
   Fase 3 empiezan a acumular.
-- **`CFMLVENFR` no registra precio desde julio.** Yahoo devuelve su última
-  operación real, así que marca `no_data` todos los días. Si es ilíquido de
-  verdad, corresponde reconocerlo con un rezago propio en vez de tratarlo como
-  un hueco.
+- **`CFMLVENFR` está en el maestro como lo que no es.** Diagnóstico viejo: "no
+  registra precio desde julio, Yahoo devuelve su última operación real, si es
+  ilíquido de verdad corresponde reconocerle un rezago propio". Está mal, y
+  conviene dejar escrito por qué para que nadie lo "arregle" en esa dirección.
+  No es una acción ilíquida: es un **fondo mutuo**. En los nemos de la Bolsa de
+  Santiago `CFM` es Cuota de Fondo Mutuo y `CFI` es Cuota de Fondo de Inversión
+  —`CFINRENTAS` es Independencia Rentas Inmobiliarias—, y `CFMLVENFR` se
+  descompone `CFM` + `LV` + `ENF` + `R`: LarrainVial Asset Management AGF
+  (RUT 96955500), fondo mutuo ENFOQUE, código CMF 8723, serie R. Tiene valor
+  cuota **diario** en el mismo endpoint que ya usamos para Fintual
+  (`fm.fm_bpr_dia.php`), y una ventana de 69 días devuelve 68 filas de esa
+  serie. Se transa una vez cada varias semanas porque las cuotas de fondo mutuo
+  registradas en la Bolsa casi no tienen mercado secundario, no porque el activo
+  no tenga precio. La prueba de que la serie es la R y no otra: Yahoo congeló
+  1.361,2 el 17-jul y el valor cuota de la R el 21-jul era 1.359,6267 —0,1% de
+  diferencia—, mientras la IR, la única otra candidata cercana, estaba en
+  1.349,35. Lo que corresponde es `type = fondo_mutuo_cl` (que además le da el
+  rezago de 2 días hábiles con que la CMF publica), `api_source = cmf`,
+  `external_id = 8723` y `meta = {admin: 96955500, serie: R}`.
+- **Un job que agota sus intentos queda varado para siempre.** `enqueue` solo
+  reabre un `no_data` si `attempts < MAX_ATTEMPTS`, pero `price_gaps` sigue
+  listando esa fecha indefinidamente. Así, una racha de fallos transitorios
+  —los 429 de Yahoo contra la IP de Render, por ejemplo— alcanza los 4 intentos
+  y esa fecha no vuelve a intentarse nunca, sin que nada lo avise: el
+  carry-forward tapa el hueco y el instrumento se ve "actualizado". Ningún
+  `lookback_days` lo rescata, porque el problema no es la ventana sino el
+  `WHERE attempts < $3` del ON CONFLICT. Es lo que obliga a resetear jobs a mano
+  cada vez que se recablea una fuente.
 
 - ~~`/api/instruments` abierto a cualquier usuario autenticado~~ — cerrado en §3.4.
 - **`instruments.canonical_id` y `custodians.canonical_id` ya tienen UI** (§3.4),
