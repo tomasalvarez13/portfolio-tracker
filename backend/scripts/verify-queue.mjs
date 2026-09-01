@@ -92,7 +92,7 @@ try {
   check('uno de los dos fue rechazado', [r1, r2].filter((x) => x === null).length, 1);
 
   console.log('\n— máquina de estados: no_data vs failed');
-  // Sin red: 'manual' hace que fetchOne lance NoDataError, y 'alpha_vantage'
+  // Sin red: 'manual' hace que fetchRange lance NoDataError, y 'alpha_vantage'
   // está permitido por el CHECK pero no tiene case en el switch, así que lanza
   // un Error común. Eso separa los dos caminos sin tocar internet.
   await query('DELETE FROM price_fetch_jobs');
@@ -162,6 +162,67 @@ try {
   check('devuelve por_estado', typeof st.por_estado, 'object');
   check('devuelve agotados', Array.isArray(st.agotados), true);
 
+  console.log('\n— el lote se toma por instrumento, no por job suelto');
+  // Las fuentes se consultan por rango, así que la unidad del lote es el
+  // instrumento: un request cubre todas sus fechas. Antes se tomaban jobs
+  // sueltos ordenados por id y un lote terminaba siendo un solo instrumento
+  // repetido, una llamada por fecha a la misma fuente.
+  await query('DELETE FROM price_fetch_jobs');
+  const rotoB = (await query(
+    `INSERT INTO instruments (name, type, currency, api_source, external_id, status)
+     VALUES ($1, 'stock_us','USD','alpha_vantage',$2,'active')
+     RETURNING id`, [`Fuente inexistente B ${RUN}`, `NOPE-B-${RUN}`])).rows[0].id;
+  for (const id of [rotoId, rotoB]) {
+    for (let k = 1; k <= 5; k++) {
+      await query(`INSERT INTO price_fetch_jobs (instrument_id, date) VALUES ($1,$2)
+                   ON CONFLICT (instrument_id, date) DO UPDATE SET status='pending', attempts=0`,
+                  [id, dates.addDays(hoy, -k)]);
+    }
+  }
+  const g1 = await q.runBatch({ limit: 1 });
+  check('limit=1 toma un instrumento', g1.instrumentos, 1);
+  check('y con él todas sus fechas', g1.tomados, 5);
+  check('un fallo de fuente cae sobre todos sus jobs', g1.failed, 5);
+
+  const g2 = await q.runBatch({ limit: 10 });
+  check('el segundo lote toma el otro instrumento', g2.instrumentos, 1);
+  check('con sus cinco fechas', g2.tomados, 5);
+
+  console.log('\n— un precio real cierra el hueco; el carry-forward no');
+  // Es la razón de fondo del cambio: price_gaps solo descarta un día si hay
+  // precio con is_stale=FALSE, así que una fecha tapada con carry-forward se
+  // vuelve a listar para siempre y su job se reabre en cada corrida.
+  const { upsertPrice, carryForward, resolverDolar } = await import('../src/services/priceService.js');
+  const hueco = dates.addDays(hoy, -1);
+  await query('DELETE FROM prices WHERE instrument_id=$1', [rotoB]);
+  await query(`INSERT INTO prices (instrument_id, date, price_clp, price_usd, source)
+               VALUES ($1,$2,500,1,'test')`, [rotoB, dates.addDays(hoy, -6)]);
+
+  await carryForward(rotoB, hueco);
+  const conStale = await cal.gapsFor(rotoB, 'stock_us', hoy, 5);
+  check('el carry-forward NO cierra el hueco', conStale.includes(hueco), true);
+
+  await upsertPrice({ instrumentId: rotoB, date: hueco, priceClp: 777, priceUsd: null, source: 'test', usdClp: 900 });
+  const conReal = await cal.gapsFor(rotoB, 'stock_us', hoy, 5);
+  check('el precio real SÍ lo cierra', conReal.includes(hueco), false);
+  check('y pisó la fila stale', (await query(
+    `SELECT is_stale FROM prices WHERE instrument_id=$1 AND date=$2`, [rotoB, hueco])).rows[0].is_stale, false);
+
+  console.log('\n— el tipo de cambio es el de la fecha, no el de hoy');
+  // Llenar ventanas completas escribe muchos días pasados: convertirlos todos al
+  // dólar de hoy los deja mal por lo que se haya movido el tipo de cambio.
+  // Fechas viejas a propósito: la serie de mindicador cubre el año en curso, así
+  // que en 2019 el resolutor solo puede usar lo que hay en la base. Sin eso el
+  // dato real del día tapa el caso que se quiere probar.
+  const d1 = '2019-03-01', d2 = '2019-03-05';
+  await query(`INSERT INTO exchange_rates (date, usd_clp) VALUES ($1,800),($2,900)
+               ON CONFLICT (date) DO UPDATE SET usd_clp=EXCLUDED.usd_clp`, [d1, d2]);
+  const usdEn = await resolverDolar(d1, d2);
+  check('usa el dólar exacto de la fecha', usdEn(d1), 800);
+  check('y el de la otra fecha', usdEn(d2), 900);
+  check('un día sin dato toma el anterior', usdEn('2019-03-02'), 800);
+  check('antes del primer dato cae al último conocido', usdEn('2019-02-01') !== 800, true);
+
   console.log('\n— is_stale se propaga al snapshot');
   const { writeSnapshots } = await import('../src/services/portfolioService.js');
   const inst = (await query(`SELECT instrument_id FROM positions LIMIT 1`)).rows[0].instrument_id;
@@ -184,6 +245,7 @@ try {
   try {
     await query('DELETE FROM instruments WHERE api_source=$1 AND external_id LIKE $2',
                 ['alpha_vantage', 'NOPE-%']);
+    await query(`DELETE FROM exchange_rates WHERE date BETWEEN '2019-01-01' AND '2019-12-31'`);
   } catch (e) { console.error('(limpieza falló:', e.message, ')'); }
   await pool.end();
   process.exit(fails===0?0:1);

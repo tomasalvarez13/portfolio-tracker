@@ -3,8 +3,10 @@
 // Reemplaza el `for` secuencial que corría dentro de una request HTTP. Ahora:
 //
 //   enqueue()  decide qué falta y crea una fila por (instrumento, fecha)
-//   runBatch() toma un lote chico, lo procesa en paralelo por fuente y responde
-//              en segundos, devolviendo cuántos quedan
+//   runBatch() toma unos pocos instrumentos con TODAS sus fechas pendientes, los
+//              procesa en paralelo por fuente —un request por instrumento cubre
+//              su ventana completa— y responde en segundos, devolviendo cuántos
+//              quedan
 //
 // El que llama (GitHub Actions) hace runBatch en loop hasta pending = 0. El
 // tiempo total deja de vivir dentro de un timeout de curl.
@@ -12,7 +14,7 @@
 import { query, pool } from '../config/db.js';
 import { todayCL } from '../utils/dates.js';
 import { lastExpectedDate, gapsFor, marketOf, isTradingDay } from './marketCalendar.js';
-import { fetchOne, upsertPrice, carryForward, refreshDolar, latestDolar, NoDataError } from './priceService.js';
+import { fetchRange, upsertPrice, carryForward, resolverDolar, NoDataError } from './priceService.js';
 
 // Cuántos fetches en paralelo tolera cada fuente sin que empiece a devolver 429.
 // CoinGecko comparte cuota por IP en el plan gratis, así que va de a uno.
@@ -152,18 +154,45 @@ export async function enqueue({ date = todayCL(), lookbackDays = 15, trigger = '
   }
 }
 
-/** Toma hasta `limit` jobs y los marca running, sin pisarse con otros workers. */
+/**
+ * Toma los jobs de hasta `limit` INSTRUMENTOS y los marca running.
+ *
+ * La unidad es el instrumento, no el job, porque las fuentes se consultan por
+ * rango: un request llena toda la ventana. Antes se tomaban jobs sueltos
+ * ordenados por id, y como el enqueue los inserta instrumento por instrumento
+ * con todas sus fechas, un lote terminaba siendo un solo instrumento repetido
+ * —una llamada por fecha a la misma fuente, y la concurrencia por fuente sin usar.
+ *
+ * Los instrumentos con la fecha pendiente más reciente van primero: si la
+ * corrida se corta, lo que queda sin hacer son los huecos viejos, no el precio
+ * de ayer.
+ *
+ * @returns {Promise<Array<{instrumentId, instrument, jobs}>>}
+ */
 async function claim(limit, runId) {
   const { rows } = await query(
-    `WITH tomados AS (
-       SELECT j.id
+    `WITH elegibles AS (
+       SELECT j.id, j.instrument_id, j.date
        FROM price_fetch_jobs j
        WHERE j.status IN ('pending','failed')
          AND (j.next_retry_at IS NULL OR j.next_retry_at <= NOW())
          AND j.attempts < $2
-       ORDER BY j.next_retry_at NULLS FIRST, j.id
+     ),
+     instrumentos AS (
+       SELECT instrument_id
+       FROM elegibles
+       GROUP BY instrument_id
+       ORDER BY max(date) DESC, instrument_id
        LIMIT $1
-       FOR UPDATE SKIP LOCKED
+     ),
+     tomados AS (
+       SELECT j.id
+       FROM price_fetch_jobs j
+       JOIN instrumentos i ON i.instrument_id = j.instrument_id
+       WHERE j.status IN ('pending','failed')
+         AND (j.next_retry_at IS NULL OR j.next_retry_at <= NOW())
+         AND j.attempts < $2
+       FOR UPDATE OF j SKIP LOCKED
      )
      UPDATE price_fetch_jobs j
      SET status = 'running', locked_at = NOW(), updated_at = NOW(), last_run_id = $3
@@ -178,15 +207,28 @@ async function claim(limit, runId) {
   const { rows: instruments } = await query(
     `SELECT id, name, type, ticker, currency, api_source, external_id, meta
      FROM instruments WHERE id = ANY($1)`,
-    [rows.map((r) => r.instrument_id)]
+    [[...new Set(rows.map((r) => r.instrument_id))]]
   );
   const byId = new Map(instruments.map((i) => [i.id, i]));
 
-  return rows.map((j) => ({
-    ...j,
-    date: typeof j.date === 'string' ? j.date.slice(0, 10) : j.date.toISOString().slice(0, 10),
-    instrument: byId.get(j.instrument_id),
-  }));
+  const grupos = new Map();
+  for (const j of rows) {
+    const job = {
+      ...j,
+      date: typeof j.date === 'string' ? j.date.slice(0, 10) : j.date.toISOString().slice(0, 10),
+    };
+    if (!grupos.has(j.instrument_id)) {
+      grupos.set(j.instrument_id, {
+        instrumentId: j.instrument_id,
+        instrument: byId.get(j.instrument_id),
+        jobs: [],
+      });
+    }
+    grupos.get(j.instrument_id).jobs.push(job);
+  }
+
+  for (const g of grupos.values()) g.jobs.sort((a, b) => (a.date < b.date ? -1 : 1));
+  return [...grupos.values()];
 }
 
 async function markDone(job, source) {
@@ -246,15 +288,21 @@ async function pool_(tareas, n) {
 }
 
 /**
- * Procesa un lote. Devuelve el resumen y cuántos jobs quedan pendientes, para
- * que el que llama sepa si tiene que volver.
+ * Procesa un lote: hasta `limit` instrumentos, con todas sus fechas pendientes.
+ *
+ * Devuelve el resumen y cuántos jobs quedan, para que el que llama sepa si
+ * tiene que volver.
  */
 export async function runBatch({ limit = 25, trigger = 'api' } = {}) {
   const runId = await abrirRun({ kind: 'run', trigger, date: todayCL() });
-  const jobs = await claim(limit, runId);
-  const report = { run_id: runId, tomados: jobs.length, ok: 0, no_data: 0, failed: 0, pending: 0, detalle: [] };
+  const grupos = await claim(limit, runId);
+  const totalJobs = grupos.reduce((n, g) => n + g.jobs.length, 0);
+  const report = {
+    run_id: runId, tomados: totalJobs, instrumentos: grupos.length,
+    ok: 0, no_data: 0, failed: 0, pending: 0, detalle: [],
+  };
 
-  if (jobs.length === 0) {
+  if (grupos.length === 0) {
     const { rows: [{ pending }] } = await query(
       `SELECT count(*)::int AS pending FROM price_fetch_jobs
        WHERE status IN ('pending','failed')
@@ -266,55 +314,70 @@ export async function runBatch({ limit = 25, trigger = 'api' } = {}) {
     return report;
   }
 
-  // El dólar antes que nada: se usa para convertir monedas.
-  let usdClp = await latestDolar();
-  try { usdClp = await refreshDolar(); } catch { /* se sigue con el último */ }
+  // El dólar antes que nada: se usa para convertir monedas, y tiene que ser el
+  // de cada fecha. Llenar ventanas completas escribe muchos días pasados, y
+  // convertirlos todos al dólar de hoy los deja mal por lo que se haya movido.
+  const fechas = grupos.flatMap((g) => g.jobs.map((j) => j.date)).sort();
+  const usdEn = await resolverDolar(fechas[0], fechas[fechas.length - 1]);
 
   // Agrupar por fuente para respetar la concurrencia de cada una.
   const porFuente = new Map();
-  for (const j of jobs) {
-    const src = j.instrument?.api_source || 'default';
+  for (const g of grupos) {
+    const src = g.instrument?.api_source || 'default';
     if (!porFuente.has(src)) porFuente.set(src, []);
-    porFuente.get(src).push(j);
+    porFuente.get(src).push(g);
   }
 
   await Promise.all([...porFuente.entries()].map(([src, lista]) => {
     const n = CONCURRENCY[src] ?? CONCURRENCY.default;
-    return pool_(lista.map((job) => async () => {
-      const label = `${job.instrument?.name || job.instrument_id}@${job.date}`;
+    return pool_(lista.map((g) => async () => {
+      const nombre = g.instrument?.name || g.instrumentId;
       try {
-        if (!job.instrument) throw new Error('instrumento inexistente');
-        const r = await fetchOne(job.instrument, job.date);
+        if (!g.instrument) throw new Error('instrumento inexistente');
 
-        // La fuente dice para qué fecha es el dato, y no siempre es la pedida:
-        // un fondo mutuo consultado hoy puede devolver el valor cuota de
-        // anteayer. El dato es real y se guarda en SU fecha; el job de la fecha
-        // pedida queda sin satisfacer y se resuelve con carry-forward.
-        const fechaFuente = r.date || job.date;
-        await upsertPrice({
-          instrumentId: job.instrument_id, date: fechaFuente,
-          priceClp: r.price_clp, priceUsd: r.price_usd,
-          source: r.source, usdClp,
-        });
+        // Un solo request por instrumento cubre todas sus fechas pendientes.
+        const desde = g.jobs[0].date;
+        const hasta = g.jobs[g.jobs.length - 1].date;
+        const serie = await fetchRange(g.instrument, desde, hasta);
 
-        if (fechaFuente === job.date) {
-          await markDone(job, r.source);
-          report.ok++;
-          report.detalle.push(`ok ${label}`);
-        } else {
-          await markNoData(job, `la fuente devolvió ${fechaFuente}`);
-          report.no_data++;
-          report.detalle.push(`sin dato ${label} (la fuente dio ${fechaFuente})`);
+        // Se guarda todo lo que la fuente trajo, no solo lo que se pidió: si el
+        // rango incluye días que todavía no tienen job, quedan resueltos igual.
+        for (const punto of serie) {
+          await upsertPrice({
+            instrumentId: g.instrumentId, date: punto.date,
+            priceClp: punto.price_clp, priceUsd: punto.price_usd,
+            source: punto.source, usdClp: usdEn(punto.date),
+          });
+        }
+
+        const porFecha = new Map(serie.map((punto) => [punto.date, punto]));
+        for (const job of g.jobs) {
+          const punto = porFecha.get(job.date);
+          if (punto) {
+            await markDone(job, punto.source);
+            report.ok++;
+            report.detalle.push(`ok ${nombre}@${job.date}`);
+          } else {
+            // La fuente respondió y esa fecha no está en su serie: feriado que
+            // no tenemos en la tabla, instrumento que dejó de cotizar, o un
+            // rezago más largo que la ventana.
+            await markNoData(job, `la fuente no tiene ${job.date}`);
+            report.no_data++;
+            report.detalle.push(`sin dato ${nombre}@${job.date}`);
+          }
         }
       } catch (e) {
-        if (e instanceof NoDataError) {
-          await markNoData(job, e.message);
-          report.no_data++;
-          report.detalle.push(`sin dato ${label}`);
-        } else {
-          await markFailed(job, e);
-          report.failed++;
-          report.detalle.push(`falló ${label}: ${e.message}`);
+        // El fallo es del instrumento completo: se marcan todos sus jobs.
+        for (const job of g.jobs) {
+          if (e instanceof NoDataError) {
+            await markNoData(job, e.message);
+            report.no_data++;
+            report.detalle.push(`sin dato ${nombre}@${job.date}`);
+          } else {
+            await markFailed(job, e);
+            report.failed++;
+            report.detalle.push(`falló ${nombre}@${job.date}: ${e.message}`);
+          }
         }
       }
     }), n);
@@ -329,7 +392,7 @@ export async function runBatch({ limit = 25, trigger = 'api' } = {}) {
   report.pending = pending;
   report.detalle = report.detalle.slice(0, 20);
   await cerrarRun(runId, {
-    claimed: jobs.length, ok: report.ok, no_data: report.no_data,
+    claimed: totalJobs, ok: report.ok, no_data: report.no_data,
     failed: report.failed, pending_after: pending, detail: { detalle: report.detalle },
   });
   return report;

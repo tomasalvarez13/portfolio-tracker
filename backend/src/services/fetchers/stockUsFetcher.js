@@ -1,6 +1,6 @@
 // Acciones / ETFs USA via Yahoo Finance (endpoint chart directo).
 
-import { fetchYahooChartPrice } from './yahooChart.js';
+import { fetchYahooChartPrice, fetchYahooChartSerie } from './yahooChart.js';
 
 /**
  * Cotización actual de un ticker USA.
@@ -10,4 +10,12 @@ import { fetchYahooChartPrice } from './yahooChart.js';
 export async function fetchStockQuote(ticker) {
   const { price, date } = await fetchYahooChartPrice(ticker);
   return { price, date, currency: 'USD' };
+}
+
+/**
+ * Cierres diarios de un ticker USA en un rango.
+ * @returns {Promise<Array<{date: string, price: number}>>}
+ */
+export async function fetchSerieStockQuote(ticker, since, until) {
+  return fetchYahooChartSerie(ticker, since, until);
 }
