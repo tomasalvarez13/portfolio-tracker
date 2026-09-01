@@ -1,4 +1,4 @@
-// Fetch de precios: un instrumento a la vez.
+// Fetch de precios: un instrumento a la vez, por fecha o por rango.
 //
 // Antes este archivo tenía el orquestador completo: un `for` sobre todos los
 // instrumentos con sleep(1000) por acción, corriendo dentro de una request HTTP.
@@ -6,12 +6,12 @@
 
 import { query } from '../config/db.js';
 import { todayCL } from '../utils/dates.js';
-import { fetchDolar } from './fetchers/dolarFetcher.js';
+import { fetchSerieDolar } from './fetchers/dolarFetcher.js';
 import { fetchCrypto } from './fetchers/cryptoFetcher.js';
-import { fetchStockQuote } from './fetchers/stockUsFetcher.js';
-import { fetchStockCl } from './fetchers/stockClFetcher.js';
-import { fetchFondoCmf } from './fetchers/fondosCmfFetcher.js';
-import { fetchAfpCuota } from './fetchers/afpFetcher.js';
+import { fetchSerieStockQuote } from './fetchers/stockUsFetcher.js';
+import { fetchSerieStockCl } from './fetchers/stockClFetcher.js';
+import { fetchSerieFondoCmf } from './fetchers/fondosCmfFetcher.js';
+import { fetchSerieAfpCuota } from './fetchers/afpFetcher.js';
 
 /**
  * La fuente respondió bien pero no tiene dato para la fecha pedida.
@@ -27,15 +27,62 @@ export class NoDataError extends Error {
 
 // ─── Dólar ────────────────────────────────────────────────────────────────────
 
-/** Trae el dólar observado y lo guarda. Devuelve usd_clp. */
-export async function refreshDolar() {
-  const { date, usd_clp } = await fetchDolar();
+/**
+ * Guarda el dólar observado de todo un rango. Devuelve un Map fecha -> usd_clp.
+ *
+ * Es el mismo request que refreshDolar: mindicador devuelve la serie completa y
+ * antes se descartaba todo menos el primer punto.
+ */
+export async function refreshDolarRango(since, until) {
+  const serie = await fetchSerieDolar(since, until);
+  if (serie.length === 0) return new Map();
+
   await query(
-    `INSERT INTO exchange_rates (date, usd_clp) VALUES ($1, $2)
+    `INSERT INTO exchange_rates (date, usd_clp)
+     SELECT * FROM unnest($1::date[], $2::numeric[])
      ON CONFLICT (date) DO UPDATE SET usd_clp = EXCLUDED.usd_clp, fetched_at = NOW()`,
-    [date, usd_clp]
+    [serie.map((p) => p.date), serie.map((p) => p.usd_clp)]
   );
-  return Number(usd_clp);
+  return new Map(serie.map((p) => [p.date, Number(p.usd_clp)]));
+}
+
+/**
+ * Devuelve una función `(fecha) => usd_clp` para convertir monedas.
+ *
+ * Importa que sea por fecha y no un único valor: un precio del 20-ago convertido
+ * con el dólar de hoy queda mal por lo que se haya movido el tipo de cambio, y
+ * llenar ventanas completas escribe justamente muchas fechas pasadas.
+ *
+ * Los días sin dato propio —fin de semana, feriado— toman el último anterior,
+ * que es lo que hace el Banco Central con el dólar observado.
+ */
+export async function resolverDolar(since, until) {
+  const mapa = new Map();
+  try {
+    for (const [f, v] of await refreshDolarRango(since, until)) mapa.set(f, v);
+  } catch {
+    // Sin red se sigue con lo que ya esté guardado.
+  }
+
+  const { rows } = await query(
+    `SELECT date::text AS date, usd_clp FROM exchange_rates
+     WHERE date <= $1 AND date >= $2::date - 60 ORDER BY date`,
+    [until, since]
+  );
+  for (const r of rows) if (!mapa.has(r.date)) mapa.set(r.date, Number(r.usd_clp));
+
+  const fechas = [...mapa.keys()].sort();
+  const ultimo = await latestDolar();
+
+  return (fecha) => {
+    if (mapa.has(fecha)) return mapa.get(fecha);
+    let previa = null;
+    for (const f of fechas) {
+      if (f > fecha) break;
+      previa = f;
+    }
+    return previa ? mapa.get(previa) : ultimo;
+  };
 }
 
 /** Último dólar guardado, para convertir cuando hoy no hay dato. */
@@ -94,53 +141,68 @@ export async function carryForward(instrumentId, date) {
 // ─── Fetch de un instrumento ──────────────────────────────────────────────────
 
 /**
- * Trae el precio de un instrumento para una fecha.
+ * Todos los precios de un instrumento en un rango de fechas.
  *
- * Devuelve la fecha que dice LA FUENTE, que no siempre es la pedida: un fondo
- * mutuo consultado hoy puede devolver el valor cuota de anteayer. Quien llama
- * decide qué hacer con esa diferencia — el dato es real y vale guardarlo en su
- * fecha, pero el job de la fecha pedida no queda satisfecho.
+ * Es la pieza que faltaba. `fetchOne` recibe una fecha y no se la pasa a nadie:
+ * las fuentes devuelven siempre su último valor, así que cualquier job de una
+ * fecha que no fuera la última era imposible de satisfacer y terminaba tapado
+ * con carry-forward. Un fondo con 11 días de ventana generaba 11 jobs de los
+ * que 10 no podían cerrar nunca.
  *
- * @returns {Promise<{price_clp:number|null, price_usd:number|null, source:string, date:string}>}
+ * Con el rango es un request por instrumento y la ventana se llena con dato
+ * real. Las fechas que la fuente no tenga simplemente no vienen en el resultado.
+ *
+ * @returns {Promise<Array<{date, price_clp, price_usd, source}>>}
  */
-export async function fetchOne(inst, date = todayCL()) {
+export async function fetchRange(inst, since, until) {
   switch (inst.api_source) {
     case 'coingecko': {
+      // Spot 24/7 sin historia en el plan gratis: solo puede satisfacer hoy.
+      const hoy = todayCL();
+      if (hoy < since || hoy > until) return [];
       const { price_usd, price_clp } = await fetchCrypto(inst.external_id || 'bitcoin');
-      // Crypto es spot 24/7: la fuente no tiene fecha propia.
-      return { price_usd, price_clp, source: 'coingecko', date };
+      return [{ date: hoy, price_clp, price_usd, source: 'coingecko' }];
     }
 
     case 'yahoo_finance': {
-      if (inst.type === 'stock_us') {
-        const { price, date: d } = await fetchStockQuote(inst.ticker);
-        return { price_usd: price, price_clp: null, source: 'yahoo_finance', date: d || date };
-      }
-      const { price, date: d } = await fetchStockCl(inst.ticker);
-      return { price_clp: price, price_usd: null, source: 'yahoo_finance', date: d || date };
+      const esUs = inst.type === 'stock_us';
+      const serie = esUs
+        ? await fetchSerieStockQuote(inst.ticker, since, until)
+        : await fetchSerieStockCl(inst.ticker, since, until);
+      return serie.map(({ date, price }) => ({
+        date,
+        price_clp: esUs ? null : price,
+        price_usd: esUs ? price : null,
+        source: 'yahoo_finance',
+      }));
     }
 
     case 'cmf': {
-      const { price_clp, date: d } = await fetchFondoCmf({
+      const serie = await fetchSerieFondoCmf({
         admin: inst.meta?.admin,
         codigo: inst.external_id,
         serie: inst.meta?.serie || 'A',
+        since,
+        until,
       });
-      if (price_clp == null) throw new NoDataError(`CMF sin valor cuota para ${inst.external_id}`);
-      return { price_clp, price_usd: null, source: 'cmf', date: d || date };
+      return serie.map(({ date, price_clp }) => ({
+        date, price_clp, price_usd: null, source: 'cmf',
+      }));
     }
 
     case 'sp': {
-      const { price_clp, date: d } = await fetchAfpCuota({
+      const serie = await fetchSerieAfpCuota({
         afp: inst.external_id,
         tipoFondo: inst.meta?.tipo_fondo || 'A',
+        since,
+        until,
       });
-      if (price_clp == null) throw new NoDataError(`SP sin valor cuota para ${inst.external_id}`);
-      return { price_clp, price_usd: null, source: 'sp', date: d || date };
+      return serie.map(({ date, price_clp }) => ({
+        date, price_clp, price_usd: null, source: 'sp',
+      }));
     }
 
     case 'manual':
-      // El precio lo carga el usuario desde la UI. No hay nada que pedir.
       throw new NoDataError('instrumento manual: el precio lo ingresa el usuario');
 
     default:
