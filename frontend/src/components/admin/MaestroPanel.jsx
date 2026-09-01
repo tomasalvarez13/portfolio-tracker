@@ -4,7 +4,7 @@ import {
   adminUpdateCustodian, adminMergeCustodian, mergeInstrument, searchInstruments,
   createCustodian,
 } from '../../services/api';
-import { formatCLP, formatUSD, formatDate } from '../../utils/formatters';
+import { formatCLP, formatUSD, formatDate, formatDateTime } from '../../utils/formatters';
 import { Package, Building2, Search, Plus } from 'lucide-react';
 
 const TYPES    = ['stock_us', 'stock_cl', 'crypto', 'fondo_mutuo_cl', 'afp'];
@@ -19,6 +19,20 @@ const chip = {
 };
 
 const inputCls = 'bg-bg-base border border-bg-border rounded px-2 py-1.5 text-xs';
+
+/**
+ * De dónde salió el último precio.
+ *
+ * `api_source` es la fuente CONFIGURADA en el maestro; `price_source` es la que
+ * realmente produjo la fila que se está mostrando. No siempre coinciden: un
+ * carry-forward hereda la source del precio anterior, y un precio cargado a mano
+ * queda como 'manual' aunque el instrumento apunte a la CMF.
+ */
+function origenDelPrecio(it) {
+  if (!it.price_source) return 'origen desconocido';
+  if (it.is_stale) return `carry-forward, copiado de ${it.price_source}`;
+  return it.price_source;
+}
 
 // ─── Instrumentos ─────────────────────────────────────────────────────────────
 // La cola de pending_mapping que antes era una sección aparte pasa a ser un
@@ -117,11 +131,18 @@ export function InstrumentsPanel() {
                   <span>{it.type} · {it.currency} · {it.api_source}{it.external_id ? ` (${it.external_id})` : ''}</span>
                   <span>{it.holders} usuario(s), {it.tx_count} tx</span>
                   {it.price_date ? (
-                    <span className={it.is_stale ? 'text-loss' : ''}>
+                    <span
+                      className={it.is_stale ? 'text-loss' : ''}
+                      title={it.price_fetched_at ? `traído el ${formatDateTime(it.price_fetched_at)}` : undefined}
+                    >
                       {it.currency === 'USD' && it.price_usd != null ? formatUSD(it.price_usd) : formatCLP(it.price_clp)}
-                      {' · '}{formatDate(it.price_date)}{it.is_stale ? ' (stale)' : ''}
+                      {' · '}{formatDate(it.price_date)}
+                      {' · '}{origenDelPrecio(it)}
                     </span>
                   ) : <span className="text-loss">sin precio</span>}
+                  {it.price_source && !it.is_stale && it.price_source !== it.api_source && (
+                    <span className="text-accent">el maestro apunta a {it.api_source}</span>
+                  )}
                 </div>
               </div>
               <button onClick={() => abrir(it)} className="text-xs text-accent hover:underline shrink-0">

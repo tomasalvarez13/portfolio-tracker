@@ -367,6 +367,7 @@ router.get('/instruments', async (req, res) => {
               i.external_id, i.status, i.fetch_enabled, i.canonical_id, i.meta,
               i.created_at, u.email AS created_by_email,
               lp.price_clp, lp.price_usd, lp.date AS price_date, lp.is_stale,
+              lp.source AS price_source, lp.fetched_at AS price_fetched_at,
               (SELECT count(DISTINCT p.user_id) FROM positions p WHERE p.instrument_id = i.id)::int AS holders,
               (SELECT count(*) FROM transactions t WHERE t.instrument_id = i.id)::int AS tx_count,
               can.name AS canonical_name
