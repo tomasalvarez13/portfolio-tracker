@@ -2,6 +2,8 @@
 // GET https://mindicador.cl/api/dolar  -> { serie: [{ fecha, valor }, ...] }
 // Validado: $892.89 CLP/USD al 29-may-2026.
 
+import { fetchConTimeout } from './http.js';
+
 const URL = 'https://mindicador.cl/api/dolar';
 
 /**
@@ -9,7 +11,7 @@ const URL = 'https://mindicador.cl/api/dolar';
  * @returns {Promise<{date: string, usd_clp: number}>}
  */
 export async function fetchDolar() {
-  const res = await fetch(URL, { headers: { 'User-Agent': 'portfolio-tracker' } });
+  const res = await fetchConTimeout(URL);
   if (!res.ok) throw new Error(`mindicador.cl respondió ${res.status}`);
   const data = await res.json();
 

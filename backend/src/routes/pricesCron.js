@@ -120,7 +120,13 @@ router.post('/run', requireCronSecret, async (req, res) => {
     }
     // Snapshot solo cuando la cola se vació: hacerlo por lote sería recalcular
     // el portafolio de todos los usuarios N veces en la misma corrida.
-    if (r.pending === 0 && r.ok > 0) {
+    //
+    // No se exige que el último lote traiga precios nuevos. Lo normal es que
+    // termine 100% no_data —los jobs que quedan al final son los que la fuente
+    // no puede satisfacer— y con `ok > 0` el snapshot del día no se tomaba
+    // nunca. writeSnapshots es idempotente sobre la fecha, así que correrlo de
+    // más no cuesta nada.
+    if (r.pending === 0) {
       try { await snapshotAllUsers(todayCL()); } catch (e) { console.error('[prices/run] snapshot:', e.message); }
     }
     res.json(r);

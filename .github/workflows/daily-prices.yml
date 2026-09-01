@@ -75,17 +75,56 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
-          TOTAL_OK=0; TOTAL_NODATA=0; TOTAL_FAILED=0
+          TOTAL_OK=0; TOTAL_NODATA=0; TOTAL_FAILED=0; TIMEOUTS=0
+
+          # Un curl que corta por timeout (exit 28) no quiere decir que el lote se
+          # perdió: el backend lo sigue procesando y suelta el advisory lock al
+          # terminar. Antes eso mataba el step —el `HTTP=$(curl …)` propaga su
+          # estado y `set -e` aborta— y la corrida quedaba a medias con la cola
+          # llena. Ahora se espera y se reintenta.
+          ESPERAS=0
+          MAX_ESPERAS=6
+          MI_LOTE_EN_VUELO=0
 
           # 60 lotes de 25 = 1.500 jobs por corrida. Es el techo de seguridad
           # para que un bug no deje el workflow girando media hora.
           for i in $(seq 1 60); do
+            set +e
             HTTP=$(curl -s -o /tmp/run.json -w '%{http_code}' \
               -X POST "$BACKEND_URL/api/prices/run?limit=25" \
               -H "x-cron-secret: $CRON_SECRET" \
-              --max-time 120)
+              --max-time 240)
+            RC=$?
+            set -e
+
+            if [ "$RC" = "28" ]; then
+              TIMEOUTS=$((TIMEOUTS + 1)); ESPERAS=$((ESPERAS + 1)); MI_LOTE_EN_VUELO=1
+              if [ "$ESPERAS" -gt "$MAX_ESPERAS" ]; then
+                echo "::error::$MAX_ESPERAS timeouts seguidos: hay algo colgado en el backend"
+                exit 1
+              fi
+              echo "lote $i: el cliente cortó a los 240s ($ESPERAS/$MAX_ESPERAS). El backend lo sigue procesando; esperando."
+              sleep 30
+              continue
+            fi
+            if [ "$RC" != "0" ]; then
+              echo "::error::curl falló con código $RC"
+              exit 1
+            fi
 
             if [ "$HTTP" = "409" ]; then
+              # Con un lote propio en vuelo el 409 es el lock de ese lote, no otro
+              # worker: hay que esperar a que lo suelte, no cortar la corrida.
+              if [ "$MI_LOTE_EN_VUELO" = "1" ]; then
+                ESPERAS=$((ESPERAS + 1))
+                if [ "$ESPERAS" -gt "$MAX_ESPERAS" ]; then
+                  echo "::error::el lote anterior no soltó el lock después de $MAX_ESPERAS esperas"
+                  exit 1
+                fi
+                echo "lote $i: el lote anterior todavía tiene el lock ($ESPERAS/$MAX_ESPERAS), esperando"
+                sleep 30
+                continue
+              fi
               echo "otro worker tiene el lock, cortando"
               break
             fi
@@ -95,6 +134,8 @@ jobs:
               exit 1
             fi
 
+            ESPERAS=0; MI_LOTE_EN_VUELO=0
+
             OK=$(jq -r '.ok'       /tmp/run.json)
             ND=$(jq -r '.no_data'  /tmp/run.json)
             FA=$(jq -r '.failed'   /tmp/run.json)
@@ -103,6 +144,11 @@ jobs:
 
             TOTAL_OK=$((TOTAL_OK + OK)); TOTAL_NODATA=$((TOTAL_NODATA + ND)); TOTAL_FAILED=$((TOTAL_FAILED + FA))
             echo "lote $i: $TOMADOS tomados, $OK ok, $ND sin dato, $FA fallidos, $PEND pendientes"
+
+            # El motivo por job. Sin esto "sin dato" es un número sin diagnóstico:
+            # no se distingue un fondo con rezago de una fuente que nunca va a
+            # tener esa fecha.
+            jq -r '.detalle[]? | "    \(.)"' /tmp/run.json
 
             if [ "$TOMADOS" = "0" ] || [ "$PEND" = "0" ]; then
               echo "cola vacía"
@@ -118,6 +164,12 @@ jobs:
             echo "| Actualizados | $TOTAL_OK |"
             echo "| Sin dato (feriado o rezago) | $TOTAL_NODATA |"
             echo "| Fallidos | $TOTAL_FAILED |"
+            if [ "$TIMEOUTS" != "0" ]; then
+              echo "| Lotes que cortaron por timeout | $TIMEOUTS |"
+              echo ""
+              echo "> Los lotes que cortaron por timeout no aportaron a los totales de arriba:"
+              echo "> el backend los terminó, pero el cliente ya no leyó su respuesta."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Los fallidos no rompen el workflow: cada job tiene reintentos con

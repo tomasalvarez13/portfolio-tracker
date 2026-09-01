@@ -12,6 +12,7 @@
 // consultamos una ventana de varios días y tomamos la fila más reciente de la serie.
 
 import * as XLSX from 'xlsx';
+import { fetchConTimeout } from './http.js';
 
 const BASE = 'https://www.cmfchile.cl/institucional/estadisticas/fm.fm_bpr_dia.php';
 
@@ -45,7 +46,7 @@ export async function fetchFondoCmf({ admin, codigo, serie = 'A', windowDays = 1
   });
 
   const url = `${BASE}?${params.toString()}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  const res = await fetchConTimeout(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeoutMs: 25_000 });
   if (!res.ok) throw new Error(`CMF respondió ${res.status} para fondo ${codigo}`);
 
   const buf = Buffer.from(await res.arrayBuffer());
