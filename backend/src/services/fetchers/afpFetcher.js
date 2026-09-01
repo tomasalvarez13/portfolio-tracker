@@ -7,7 +7,13 @@
 // Los valores tienen retraso (provisorios sujetos a confirmación). Reintentamos
 // hacia atrás hasta encontrar un día con dato para la AFP buscada.
 
+import { fetchConTimeout, presupuesto } from './http.js';
+
 const BASE = 'https://www.spensiones.cl/apps/valoresCuotaFondo/vcfAFP.php';
+
+// El loop de abajo hace un POST por día hábil. Un timeout por request no acota
+// el total, así que el job completo lleva su propio techo.
+const PRESUPUESTO_MS = 45_000;
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
@@ -29,8 +35,10 @@ function parseClpNumber(str) {
 export async function fetchAfpCuota({ afp, tipoFondo = 'A', maxBack = 7 }) {
   const afpUpper = afp.toUpperCase();
   const today = new Date();
+  const plazo = presupuesto(PRESUPUESTO_MS);
 
   for (let i = 0; i < maxBack; i++) {
+    if (plazo.agotado()) break;
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     // Saltar fines de semana
@@ -47,7 +55,7 @@ export async function fetchAfpCuota({ afp, tipoFondo = 'A', maxBack = 7 }) {
     const url = `${BASE}?tf=${encodeURIComponent(tipoFondo)}`;
     let html;
     try {
-      const res = await fetch(url, {
+      const res = await fetchConTimeout(url, {
         method: 'POST',
         headers: {
           'User-Agent': 'Mozilla/5.0',
@@ -80,5 +88,8 @@ export async function fetchAfpCuota({ afp, tipoFondo = 'A', maxBack = 7 }) {
     }
   }
 
+  if (plazo.agotado()) {
+    throw new Error(`SP: no alcanzó a responder para AFP ${afp} fondo ${tipoFondo} en ${PRESUPUESTO_MS / 1000}s`);
+  }
   throw new Error(`SP: sin valor cuota para AFP ${afp} fondo ${tipoFondo} en los últimos ${maxBack} días`);
 }

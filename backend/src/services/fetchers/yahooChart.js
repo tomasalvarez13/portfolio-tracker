@@ -4,6 +4,7 @@
 // compartido como Render free tier.
 
 import { todayCL } from '../../utils/dates.js';
+import { fetchConTimeout } from './http.js';
 
 const BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 
@@ -13,7 +14,7 @@ const BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
  * @returns {Promise<{price: number, date: string}>}
  */
 export async function fetchYahooChartPrice(symbol) {
-  const res = await fetch(`${BASE}/${encodeURIComponent(symbol)}`, {
+  const res = await fetchConTimeout(`${BASE}/${encodeURIComponent(symbol)}`, {
     headers: { 'User-Agent': 'Mozilla/5.0' },
   });
   if (!res.ok) throw new Error(`Yahoo Finance (chart) respondió ${res.status} para ${symbol}`);
