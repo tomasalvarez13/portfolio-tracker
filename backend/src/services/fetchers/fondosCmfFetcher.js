@@ -8,39 +8,46 @@
 //                          patrimonio, n_participes, valor_cuota]
 // Validado contra certificado Fintual: diferencia total -0.001%.
 //
-// El valor cuota llega con ~1 día hábil de retraso (normal en Chile). Por eso
-// consultamos una ventana de varios días y tomamos la fila más reciente de la serie.
+// El valor cuota llega con ~1 día hábil de retraso (normal en Chile), así que la
+// consulta siempre es por ventana. La planilla trae TODAS las fechas del rango:
+// fetchSerieFondoCmf las devuelve completas —un request llena la ventana entera de
+// un instrumento— y fetchFondoCmf se queda con la más reciente, para los llamadores
+// que solo quieren el precio de hoy.
 
 import * as XLSX from 'xlsx';
 import { fetchConTimeout } from './http.js';
+import { addDays, todayCL } from '../../utils/dates.js';
 
 const BASE = 'https://www.cmfchile.cl/institucional/estadisticas/fm.fm_bpr_dia.php';
 
-function pad2(n) { return String(n).padStart(2, '0'); }
-
 /**
- * Trae el valor cuota más reciente de un fondo mutuo CMF.
+ * Todos los valores cuota de un fondo en un rango de fechas.
+ *
+ * Es un solo request: la planilla ya viene con el rango completo. Antes se
+ * descartaba todo menos la fila más reciente, lo que obligaba a un job por fecha
+ * que además nunca se podía satisfacer.
+ *
  * @param {object} opts
- * @param {string} opts.admin     - RUT administradora sin DV (ej '76810627')
- * @param {string} opts.codigo    - código/RUN del fondo (ej '9570')
- * @param {string} [opts.serie]   - serie a filtrar (ej 'A'). Default 'A'.
- * @param {number} [opts.windowDays] - días hacia atrás a consultar. Default 10.
- * @returns {Promise<{date: string, price_clp: number, serie: string}>}
+ * @param {string} opts.admin   - RUT administradora sin DV (ej '76810627')
+ * @param {string} opts.codigo  - código/RUN del fondo (ej '9570')
+ * @param {string} [opts.serie] - serie a filtrar (ej 'A'). Default 'A'.
+ * @param {string} opts.since   - desde, 'YYYY-MM-DD'
+ * @param {string} opts.until   - hasta, 'YYYY-MM-DD'
+ * @returns {Promise<Array<{date: string, price_clp: number}>>} ordenado por fecha
  */
-export async function fetchFondoCmf({ admin, codigo, serie = 'A', windowDays = 10 }) {
-  const today = new Date();
-  const from = new Date(today);
-  from.setDate(from.getDate() - windowDays);
+export async function fetchSerieFondoCmf({ admin, codigo, serie = 'A', since, until }) {
+  const [aDesde, mDesde, dDesde] = since.split('-');
+  const [aHasta, mHasta, dHasta] = until.split('-');
 
   const params = new URLSearchParams({
     admins: admin,
     ffmm: codigo,
-    dia2_select: String(from.getDate()),
-    mes2: pad2(from.getMonth() + 1),
-    anno2: String(from.getFullYear()),
-    dia3_select: String(today.getDate()),
-    mes3: pad2(today.getMonth() + 1),
-    anno3: String(today.getFullYear()),
+    dia2_select: String(Number(dDesde)),
+    mes2: mDesde,
+    anno2: aDesde,
+    dia3_select: String(Number(dHasta)),
+    mes3: mHasta,
+    anno3: aHasta,
     out: 'excel',
     lang: 'es',
   });
@@ -55,7 +62,7 @@ export async function fetchFondoCmf({ admin, codigo, serie = 'A', windowDays = 1
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
 
   // Buscar filas de datos: col0 = fecha dd/mm/yyyy, col4 = serie, col8 = valor cuota
-  let best = null; // { date: Date, iso, valor }
+  const porFecha = new Map();
   for (const row of rows) {
     const fecha = row?.[0];
     const filaSerie = row?.[4];
@@ -68,15 +75,31 @@ export async function fetchFondoCmf({ admin, codigo, serie = 'A', windowDays = 1
     if (!Number.isFinite(valorNum) || valorNum <= 0) continue;
 
     const [, dd, mm, yyyy] = m;
-    const d = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
-    if (!best || d > best.date) {
-      best = { date: d, iso: `${yyyy}-${mm}-${dd}`, valor: valorNum };
-    }
+    porFecha.set(`${yyyy}-${mm}-${dd}`, valorNum);
   }
 
-  if (!best) {
+  return [...porFecha.entries()]
+    .map(([date, price_clp]) => ({ date, price_clp }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/**
+ * El valor cuota más reciente de un fondo. Wrapper sobre fetchSerieFondoCmf para
+ * los llamadores que solo quieren el precio de hoy (el refresh manual de la UI).
+ *
+ * @param {number} [opts.windowDays] - días hacia atrás a consultar. Default 10.
+ * @returns {Promise<{date: string, price_clp: number, serie: string}>}
+ */
+export async function fetchFondoCmf({ admin, codigo, serie = 'A', windowDays = 10 }) {
+  const until = todayCL();
+  const serieRows = await fetchSerieFondoCmf({
+    admin, codigo, serie, since: addDays(until, -windowDays), until,
+  });
+
+  if (serieRows.length === 0) {
     throw new Error(`CMF: sin valor cuota para fondo ${codigo} serie ${serie} en los últimos ${windowDays} días`);
   }
 
-  return { date: best.iso, price_clp: best.valor, serie };
+  const ultimo = serieRows[serieRows.length - 1];
+  return { date: ultimo.date, price_clp: ultimo.price_clp, serie };
 }
