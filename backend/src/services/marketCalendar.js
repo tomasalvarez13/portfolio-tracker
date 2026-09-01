@@ -36,13 +36,35 @@ export function marketOf(type) {
  *
  * `fondosCmfFetcher` ya lo compensaba pidiendo una ventana de 10 días y tomando
  * la fila más reciente; acá queda explícito para todos.
+ *
+ * Las acciones chilenas llevan 1 y no 0 por el horario del cron, no por la
+ * fuente: corre 12:30 y 13:30 UTC —08:30 y 09:30 en Chile— y la Bolsa de
+ * Santiago abre 09:30. Pedir el cierre de hoy es pedir algo que todavía no
+ * pasó. El job cerraba en `no_data`, tapaba el día con carry-forward, y el
+ * precio más nuevo del instrumento quedaba siendo una copia marcada stale: el
+ * maestro lo mostraba en rojo aunque no hubiera nada roto. Se llenaba con el
+ * dato real recién en la corrida del día siguiente.
+ *
+ * Y no era solo cosmético. Cada `no_data` gasta un intento, y al cuarto el job
+ * queda muerto: `enqueue` solo reabre los `no_data` con `attempts <
+ * MAX_ATTEMPTS` y `claim` los excluye por lo mismo. Dos corridas diarias no
+ * alcanzaban a agotarlo, pero cualquier corrida manual de más sí — y esa fecha
+ * no se rellenaba nunca, con el carry-forward tapando el hueco para siempre.
+ *
+ * Con 1 el objetivo pasa a ser el día hábil anterior, que siempre está
+ * publicado, y el job cierra `done` al primer intento. Se renuncia al precio
+ * intradía, que a esa hora igual no existía.
  */
 export function expectedLagDays(type) {
   switch (type) {
     case 'fondo_mutuo_cl': return 2;
     case 'afp':            return 2;
+    case 'stock_cl':       return 1;
     case 'crypto':         return 0;
-    default:               return 0;   // acciones: cierre del mismo día
+    // stock_us tiene exactamente el mismo problema —el cron corre antes de que
+    // abra Nueva York— pero queda en 0 a propósito: cambiarlo mueve la fecha de
+    // valorización de todas las posiciones en dólares y es una decisión aparte.
+    default:               return 0;
   }
 }
 
