@@ -12,6 +12,51 @@ const SOURCES  = ['yahoo_finance', 'coingecko', 'cmf', 'sp', 'manual', 'alpha_va
 const STATUSES = ['active', 'pending_mapping', 'deprecated'];
 const LIMIT    = 50;
 
+/**
+ * Las llaves de `meta` que cada fuente necesita para poder pedir un precio.
+ *
+ * `fetchRange` lee meta.admin + meta.serie cuando la fuente es 'cmf', y
+ * meta.tipo_fondo cuando es 'sp'. Hasta ahora el form no tenía forma de
+ * escribirlas: se podía dejar un instrumento apuntando a la CMF sin decirle a
+ * qué administradora ni a qué serie, y el único camino era entrar por SQL.
+ *
+ * Los defaults del fetcher son lo que hace que la falta duela en silencio: sin
+ * `serie` asume la A, y dos series del mismo fondo son dos valores cuota
+ * distintos —en LarrainVial Enfoque, la A vale ~3x la R—. No es un dato que
+ * falta, es un dato equivocado que se ve igual de bien.
+ */
+const META_FIELDS = {
+  cmf: {
+    campos: [
+      { key: 'admin', placeholder: 'admin CMF (RUT sin DV)' },
+      { key: 'serie', placeholder: 'serie (A, R, APV…)' },
+    ],
+    aviso: 'Sin serie el fetcher asume la A, que es otro valor cuota del mismo fondo.',
+  },
+  sp: {
+    campos: [
+      { key: 'tipo_fondo', placeholder: 'tipo de fondo (A–E)' },
+    ],
+    aviso: 'Sin tipo_fondo el fetcher asume el A.',
+  },
+};
+
+/**
+ * `meta` viaja completo y no por llave: el backend hace `meta = COALESCE($9, meta)`,
+ * que reemplaza el jsonb entero en vez de mergearlo. Mandar solo lo que muestra
+ * el form borraría las llaves que dejó la cartola —origen, statement_id,
+ * texto_original—. Las vacías se descartan para no guardar `{"serie": ""}`, que
+ * el fetcher leería como serie presente pero en blanco.
+ */
+const metaLimpia = (meta) => Object.fromEntries(
+  Object.entries(meta || {}).filter(([, v]) => v !== '' && v != null)
+);
+
+/** Llaves que la fuente elegida exige y el form todavía no tiene. */
+const metaFaltante = (form) => (META_FIELDS[form.api_source]?.campos || [])
+  .filter(({ key }) => !String(form.meta?.[key] ?? '').trim())
+  .map(({ key }) => key);
+
 const chip = {
   active:          'bg-gain/15 text-gain',
   pending_mapping: 'bg-accent/15 text-accent',
@@ -73,6 +118,7 @@ export function InstrumentsPanel() {
       name: it.name, alias: it.alias || '', type: it.type, ticker: it.ticker || '',
       currency: it.currency, api_source: it.api_source, external_id: it.external_id || '',
       status: it.status, fetch_enabled: it.fetch_enabled,
+      meta: it.meta || {},
     } : {});
   }
 
@@ -177,7 +223,17 @@ export function InstrumentsPanel() {
                     onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
                     {STATUSES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
+                  {(META_FIELDS[form.api_source]?.campos || []).map(({ key, placeholder }) => (
+                    <input key={key} placeholder={placeholder} value={form.meta?.[key] ?? ''} className={inputCls}
+                      onChange={(e) => setForm((f) => ({ ...f, meta: { ...f.meta, [key]: e.target.value } }))} />
+                  ))}
                 </div>
+
+                {metaFaltante(form).length > 0 && (
+                  <p className="text-xs text-loss">
+                    Falta {metaFaltante(form).join(' y ')} en meta. {META_FIELDS[form.api_source]?.aviso}
+                  </p>
+                )}
 
                 <label className="flex items-center gap-2 text-xs text-muted cursor-pointer w-fit">
                   <input type="checkbox" checked={!!form.fetch_enabled}
@@ -185,7 +241,8 @@ export function InstrumentsPanel() {
                   El cron lo actualiza
                 </label>
 
-                <button disabled={busy} onClick={() => correr(() => adminUpdateInstrument(it.id, form))}
+                <button disabled={busy}
+                  onClick={() => correr(() => adminUpdateInstrument(it.id, { ...form, meta: metaLimpia(form.meta) }))}
                   className="px-3 py-1.5 rounded text-xs bg-accent hover:bg-accent/90 text-white disabled:opacity-50">
                   Guardar
                 </button>
