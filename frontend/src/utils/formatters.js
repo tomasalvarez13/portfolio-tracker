@@ -103,3 +103,12 @@ export function formatDate(iso) {
   const [y, m, d] = String(iso).slice(0, 10).split('-');
   return `${d}-${m}-${y}`;
 }
+
+/** Timestamp ISO -> "DD-MM-YYYY HH:MM", en hora local. */
+export function formatDateTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
