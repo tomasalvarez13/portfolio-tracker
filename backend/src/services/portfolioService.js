@@ -269,19 +269,56 @@ export async function writeSnapshots(date = todayCL(), userId = null) {
 /**
  * Snapshot de un usuario. Mantiene la firma y el shape de retorno de antes
  * porque lo usan las rutas de positions, movements y portfolio.
+ *
+ * NUNCA escribe una fecha pasada, aunque se la pidan. `writeSnapshots` es
+ * presente-tiempo por construcción: valoriza con `latest_prices` (el precio más
+ * nuevo, sin filtro de fecha) y con el último `usd_clp`, y su paso 2 borra las
+ * filas del día de todo bucket que no esté en las `positions` ACTUALES.
+ * Aplicado a una fecha pasada eso hace dos daños:
+ *
+ *   - revaloriza TODAS las posiciones del usuario a precio de hoy y estampa ese
+ *     número en esa fecha, y
+ *   - borra la historia de cualquier posición cerrada desde entonces.
+ *
+ * Y no es recuperable: los precios viven en una ventana de ~15 días hábiles
+ * (`priceQueue.enqueue`) y CoinGecko no puede devolver fechas pasadas, así que
+ * el número que se pisa era mejor que el que lo reemplaza.
+ *
+ * Cinco caminos llegaban acá con fechas pasadas —confirmar una cartola con
+ * `statement_date` viejo, un aporte o retiro retroactivo, editar la fecha de un
+ * movimiento, declarar un saldo con fecha, y `POST /api/portfolio/snapshot` con
+ * un `date` arbitrario del body—, o sea que el daño no requería nada raro: pasaba
+ * solo. Reescribir la serie histórica de verdad necesita replay del ledger por
+ * fecha y reusar el precio ya guardado de cada día; hasta que eso exista, acá se
+ * clampea y la fecha pasada simplemente no se toca.
+ *
+ * Solo clampea hacia atrás. Una fecha futura se deja pasar porque los scripts de
+ * verificación usan `new Date().toISOString()` (UTC), que de noche en Chile ya es
+ * el día siguiente que `todayCL()`.
+ *
  * @returns {Promise<{date:string, total_clp:number, total_usd:number, breakdown:object}>}
  */
 export async function computeAndSaveSnapshot(userId, date = todayCL()) {
-  await writeSnapshots(date, userId);
+  const hoy = todayCL();
+  // El argumento puede venir como Date de pg (routes/movements.js lo pasa así).
+  const pedida = toISODate(date) || hoy;
+  const cuando = pedida < hoy ? hoy : pedida;
+
+  if (cuando !== pedida) {
+    console.warn(`[portfolioService] snapshot de ${pedida} pedido para ${userId}: ` +
+                 `se escribe ${cuando}. La serie histórica no se reescribe acá.`);
+  }
+
+  await writeSnapshots(cuando, userId);
 
   const { rows } = await query(
     `SELECT date, total_clp, total_usd, breakdown FROM portfolio_snapshots
      WHERE user_id = $1 AND date = $2`,
-    [userId, date]
+    [userId, cuando]
   );
 
   // Sin posiciones y sin historia previa no se escribe fila: no es un error.
-  if (!rows[0]) return { date, total_clp: 0, total_usd: 0, breakdown: {} };
+  if (!rows[0]) return { date: cuando, total_clp: 0, total_usd: 0, breakdown: {} };
 
   return {
     date: toISODate(rows[0].date),
