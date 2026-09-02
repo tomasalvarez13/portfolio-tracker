@@ -24,9 +24,15 @@ router.get('/breakdown', async (req, res) => {
   res.json(await computeBreakdown(req.user.id));
 });
 
-// POST /api/portfolio/snapshot -> fuerza snapshot del día (útil al sembrar datos)
+// POST /api/portfolio/snapshot -> fuerza el snapshot del día
+//
+// Ya no acepta `date` del body. Era el único camino donde el usuario elegía la
+// fecha directamente, y `computeAndSaveSnapshot` la usaba para revalorizar toda
+// su cartera a precio de hoy y estampar el resultado en esa fecha: un borrador
+// de historia propia disparable con un POST. El clamp del servicio ya lo cubre
+// hacia atrás, pero acá tampoco tiene sentido aceptarlo hacia adelante.
 router.post('/snapshot', async (req, res) => {
-  const snap = await computeAndSaveSnapshot(req.user.id, req.body?.date);
+  const snap = await computeAndSaveSnapshot(req.user.id);
   res.json(snap);
 });
 
