@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { getMovements, createMovement, updateMovement, deleteMovement } from '../services/api';
-import { formatCLP, formatDate, colorForValue } from '../utils/formatters';
+import { formatCLP, formatDate, formatUnits, colorForValue } from '../utils/formatters';
 import { StatCard } from '../components/ui/Card.jsx';
 import { Spinner, ErrorBox } from '../components/ui/Spinner.jsx';
 import { ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
@@ -18,7 +18,7 @@ function MovementForm({ initial, onSubmit, onCancel }) {
   function submit(e) {
     e.preventDefault();
     onSubmit({
-      instrument_id: null,
+      instrument_id: initial?.instrument_id ?? null,
       date,
       type,
       amount_clp: Number(amount),
@@ -29,6 +29,12 @@ function MovementForm({ initial, onSubmit, onCancel }) {
   return (
     <form onSubmit={submit} className="card p-5 space-y-4">
       <h3 className="font-medium">{initial ? 'Editar movimiento' : 'Nuevo movimiento'}</h3>
+      {initial?.instrument_name && (
+        <p className="text-xs text-muted -mt-2">
+          Movimiento de {initial.instrument_name}
+          {initial.custodian_name && initial.custodian_name !== 'Sin custodio' ? ` · ${initial.custodian_name}` : ''}
+        </p>
+      )}
 
       <div className="flex gap-2">
         {['aporte', 'retiro'].map(t => (
@@ -71,7 +77,7 @@ function MovementForm({ initial, onSubmit, onCancel }) {
   );
 }
 
-const fetchMovs = () => getMovements().then(data => data.filter(m => !m.instrument_id));
+const fetchMovs = () => getMovements();
 
 export default function Movimientos() {
   const { user } = useAuth();
@@ -204,12 +210,13 @@ export default function Movimientos() {
           Detalle ({filtered.length})
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[520px]">
+          <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="text-left text-xs text-muted border-b border-bg-border">
                 <th className="px-4 py-3 font-medium">Fecha</th>
                 <th className="px-4 py-3 font-medium">Tipo</th>
-                <th className="px-4 py-3 font-medium text-right">Monto CLP</th>
+                <th className="px-4 py-3 font-medium">Instrumento</th>
+                <th className="px-4 py-3 font-medium text-right">Monto</th>
                 <th className="px-4 py-3 font-medium">Notas</th>
                 <th className="px-4 py-3 font-medium text-right">Acciones</th>
               </tr>
@@ -224,8 +231,22 @@ export default function Movimientos() {
                       {m.type === 'aporte' ? 'Aporte' : 'Retiro'}
                     </span>
                   </td>
+                  <td className="px-4 py-3 text-xs">
+                    {m.instrument_name ? (
+                      <>
+                        {m.instrument_name}
+                        {m.custodian_name && m.custodian_name !== 'Sin custodio' && (
+                          <span className="text-muted"> · {m.custodian_name}</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-muted">Portafolio</span>
+                    )}
+                  </td>
                   <td className={`px-4 py-3 text-right num ${m.type === 'aporte' ? 'text-gain' : 'text-loss'}`}>
-                    {formatCLP(m.amount_clp)}
+                    {m.amount_clp != null
+                      ? formatCLP(m.amount_clp)
+                      : m.units != null ? `${formatUnits(m.units)} u.` : '—'}
                   </td>
                   <td className="px-4 py-3 text-xs text-muted truncate max-w-[260px]" title={m.notes}>{m.notes || '—'}</td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
@@ -237,7 +258,11 @@ export default function Movimientos() {
                       </span>
                     ) : (
                       <>
-                        <button onClick={() => setEditing(m)} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
+                        {m.amount_clp != null ? (
+                          <button onClick={() => setEditing(m)} className="text-xs text-muted hover:text-gray-200 mr-2">editar</button>
+                        ) : (
+                          <span className="text-xs text-muted/50 mr-2" title="Cargado en unidades: se edita desde Posiciones">editar</span>
+                        )}
                         <button onClick={() => setConfirmDelete(m.id)} className="text-xs text-muted hover:text-loss">eliminar</button>
                       </>
                     )}
@@ -245,7 +270,7 @@ export default function Movimientos() {
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-10 text-center text-muted">Sin movimientos para mostrar.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-10 text-center text-muted">Sin movimientos para mostrar.</td></tr>
               )}
             </tbody>
           </table>

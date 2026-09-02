@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getSummary, getSnapshots, getBreakdown, getMovements } from '../services/api';
+import { getSummary, getSnapshots, getBreakdown, getFlujos } from '../services/api';
 import { formatCLP, formatUSD, formatDate } from '../utils/formatters';
 import { StatCard } from '../components/ui/Card.jsx';
 import { Spinner, ErrorBox } from '../components/ui/Spinner.jsx';
@@ -10,17 +10,10 @@ import { useAuth } from '../hooks/useAuth.jsx';
 import { usePersistedFetch } from '../hooks/usePersistedFetch.js';
 
 const fetchResumen = async () => {
-  const [s, snap, bd, mov] = await Promise.all([
-    getSummary(), getSnapshots(), getBreakdown(),
-    getMovements({ type: 'aporte' }),
+  const [s, snap, bd, flujos] = await Promise.all([
+    getSummary(), getSnapshots(), getBreakdown(), getFlujos(),
   ]);
-  return {
-    summary:   s,
-    snapshots: snap,
-    breakdown: bd,
-    aportes:   mov.filter(m => !m.instrument_id)
-                  .map(m => ({ date: m.date?.slice(0, 10), amount: Number(m.amount_clp) })),
-  };
+  return { summary: s, snapshots: snap, breakdown: bd, flujos };
 };
 
 export default function Resumen() {
@@ -34,7 +27,7 @@ export default function Resumen() {
   const summary   = data?.summary   ?? null;
   const snapshots = data?.snapshots ?? [];
   const breakdown = data?.breakdown ?? [];
-  const aportes   = data?.aportes   ?? [];
+  const flujos    = data?.flujos    ?? [];
 
   if (loading) return <Spinner />;
   if (error && !data) return <ErrorBox message={error.response?.data?.error || error.message} />;
@@ -86,7 +79,7 @@ export default function Resumen() {
       {/* Gráfico evolutivo */}
       <EvolutionChart
         snapshots={snapshots}
-        aportes={aportes}
+        flujos={flujos}
         currency={currency}
         onPointClick={setSelectedDay}
       />

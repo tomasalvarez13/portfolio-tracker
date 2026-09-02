@@ -47,6 +47,21 @@ export const createMovement = (body) => api.post('/movements', body).then((r) =>
 export const updateMovement = (id, body) => api.put(`/movements/${id}`, body).then((r) => r.data);
 export const deleteMovement = (id) => api.delete(`/movements/${id}`);
 
+// Flujos para el gráfico: aportes y retiros, con y sin instrumento, con el
+// monto siempre positivo y el signo en `type`. Los movimientos cargados solo
+// en unidades quedan fuera: no hay forma de dibujarlos en un eje en CLP.
+export const getFlujos = () =>
+  getMovements().then((rows) =>
+    rows
+      .map((m) => ({
+        date:       m.date?.slice(0, 10),
+        amount:     Number(m.amount_clp) || 0,
+        type:       m.type,
+        instrument: m.instrument_name || null,
+      }))
+      .filter((f) => f.date && f.amount > 0)
+  );
+
 // --- Precios ---
 export const getLatestPrices = () => api.get('/prices/latest').then((r) => r.data);
 export const getPriceHistory = (instrumentId, params) =>

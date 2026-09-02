@@ -21,7 +21,7 @@ const RANGE_BUTTONS = [
 
 function toISO(d) { return d.toISOString().slice(0, 10); }
 
-function filterByRange(snapshots, key, aportes) {
+function filterByRange(snapshots, key, flujos) {
   if (!snapshots?.length || key === 'all') return snapshots;
   const now = new Date();
   let startISO;
@@ -33,7 +33,9 @@ function filterByRange(snapshots, key, aportes) {
     case 'mtd': { startISO = toISO(new Date(now.getFullYear(), now.getMonth(), 1)); break; }
     case 'ytd': { startISO = toISO(new Date(now.getFullYear(), 0, 1));              break; }
     case 'apt': {
-      if (!aportes?.length) return snapshots;
+      // El botón mide desde el último APORTE, no desde cualquier flujo.
+      const aportes = flujos?.filter(f => f.type === 'aporte') ?? [];
+      if (!aportes.length) return snapshots;
       const last = [...aportes].sort((a,b) => a.date.localeCompare(b.date)).pop();
       startISO = last.date;
       break;
@@ -44,7 +46,7 @@ function filterByRange(snapshots, key, aportes) {
 }
 
 // ---- Tooltip personalizado ----
-function CustomTooltip({ active, payload, label, currency, aportes, rangeData, isDragging }) {
+function CustomTooltip({ active, payload, label, currency, flujos, rangeData, isDragging }) {
   if (isDragging || rangeData) {
     // Modo "selección de rango" — mostrar resumen del rango
     if (!rangeData) return null;
@@ -71,9 +73,12 @@ function CustomTooltip({ active, payload, label, currency, aportes, rangeData, i
             </div>
           </div>
         )}
-        {rangeData.aportesNeto > 0 && (
+        {rangeData.flujoNeto !== 0 && (
           <div className="text-[10px] text-muted pt-1 border-t border-bg-border">
-            Aportes período: <span className="num text-gray-300">{formatCLP(rangeData.aportesNeto)}</span>
+            Flujo neto período:{' '}
+            <span className={`num ${colorForValue(rangeData.flujoNeto)}`}>
+              {formatCLP(rangeData.flujoNeto, { sign: true })}
+            </span>
           </div>
         )}
       </div>
@@ -84,21 +89,30 @@ function CustomTooltip({ active, payload, label, currency, aportes, rangeData, i
   if (!active || !payload?.length) return null;
   const value  = payload[0]?.value;
   const fmt    = currency === 'CLP' ? formatCLP : formatUSD;
-  const aporte = aportes.find(a => a.date === label);
+  // Puede haber más de un flujo el mismo día (y de distinto signo).
+  const delDia = flujos.filter(f => f.date === label);
   return (
     <div className="bg-bg-card border border-bg-border rounded-xl px-4 py-3 shadow-xl text-xs space-y-1">
       <div className="text-muted">{formatDate(label)}</div>
       <div className="text-base font-semibold num">{fmt(value)}</div>
-      {aporte && (
-        <div className="text-gain flex items-center gap-1.5 pt-1 border-t border-bg-border">
-          <span>↑</span><span>Aporte {fmt(aporte.amount)}</span>
+      {delDia.length > 0 && (
+        <div className="pt-1 border-t border-bg-border space-y-0.5">
+          {delDia.map((f, i) => (
+            <div key={i} className={`flex items-center gap-1.5 ${f.type === 'aporte' ? 'text-gain' : 'text-loss'}`}>
+              <span>{f.type === 'aporte' ? '↑' : '↓'}</span>
+              <span>
+                {f.type === 'aporte' ? 'Aporte' : 'Retiro'} {fmt(f.amount)}
+                {f.instrument ? ` · ${f.instrument}` : ''}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-export default function EvolutionChart({ snapshots, aportes = [], currency = 'CLP', onPointClick, onRangeChange, defaultRange = 'all' }) {
+export default function EvolutionChart({ snapshots, flujos = [], currency = 'CLP', onPointClick, onRangeChange, defaultRange = 'all' }) {
   const [range, setRange]       = useState(defaultRange);
   const [refLeft, setRefLeft]   = useState(null);   // inicio drag
   const [refRight, setRefRight] = useState(null);   // fin drag
@@ -106,8 +120,8 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
   const [twrSelected, setTwrSelected] = useState(null);
 
   const filteredSnaps = useMemo(
-    () => filterByRange(snapshots, range, aportes),
-    [snapshots, range, aportes]
+    () => filterByRange(snapshots, range, flujos),
+    [snapshots, range, flujos]
   );
 
   // Emitir cambio del rango efectivo al padre.
@@ -143,7 +157,7 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
   const maxVal = data.length ? Math.max(...data.map(d => d.value)) : 1;
   const minVal = data.length ? Math.min(...data.map(d => d.value)) : 0;
 
-  const significantAportes = aportes.filter(a => a.amount >= 500_000);
+  const significantFlujos = flujos.filter(f => f.amount >= 500_000);
 
   // Datos del rango seleccionado (drag persistente)
   const rangeData = useMemo(() => {
@@ -154,18 +168,18 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
     const isCLP = currency === 'CLP';
     const vi = isCLP ? fromSnap.total_clp : fromSnap.total_usd;
     const vf = isCLP ? toSnap.total_clp   : toSnap.total_usd;
-    const aportesNeto = aportes
-      .filter(a => a.date > selectedRange.from && a.date <= selectedRange.to)
-      .reduce((s, a) => s + Number(a.amount || 0), 0);
+    const flujoNeto = flujos
+      .filter(f => f.date > selectedRange.from && f.date <= selectedRange.to)
+      .reduce((s, f) => s + (f.type === 'retiro' ? -1 : 1) * Number(f.amount || 0), 0);
     return {
       from: selectedRange.from,
       to: selectedRange.to,
       change: vf - vi,
       pct: vi > 0 ? (vf - vi) / vi * 100 : null,
       twr: twrSelected?.twr_pct ?? null,
-      aportesNeto,
+      flujoNeto,
     };
-  }, [selectedRange, snapshots, currency, aportes, twrSelected]);
+  }, [selectedRange, snapshots, currency, flujos, twrSelected]);
 
   // Fetch TWR para el rango seleccionado
   useEffect(() => {
@@ -305,7 +319,7 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
               content={
                 <CustomTooltip
                   currency={currency}
-                  aportes={aportes.map(a => ({ date: a.date, amount: a.amount }))}
+                  flujos={flujos}
                   rangeData={rangeData}
                   isDragging={refLeft && refRight}
                 />
@@ -313,10 +327,11 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
               cursor={{ stroke: '#3b82f6', strokeWidth: 1, strokeDasharray: '4 2' }}
             />
 
-            {/* Aportes significativos */}
-            {significantAportes.map(a => (
-              <ReferenceLine key={a.date} x={a.date}
-                stroke="#22c55e" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.4} />
+            {/* Flujos significativos: verde aporte, rojo retiro */}
+            {significantFlujos.map((f, i) => (
+              <ReferenceLine key={`${f.type}-${f.date}-${i}`} x={f.date}
+                stroke={f.type === 'aporte' ? '#22c55e' : '#ef4444'}
+                strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.4} />
             ))}
 
             {/* Área de selección (drag temporal) */}
@@ -340,9 +355,15 @@ export default function EvolutionChart({ snapshots, aportes = [], currency = 'CL
       )}
 
       <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-muted flex-wrap">
-        <div className="flex items-center gap-2">
-          <span className="inline-block w-6 border-t border-dashed border-gain opacity-60" />
-          <span>Aporte</span>
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-2">
+            <span className="inline-block w-6 border-t border-dashed border-gain opacity-60" />
+            <span>Aporte</span>
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="inline-block w-6 border-t border-dashed border-loss opacity-60" />
+            <span>Retiro</span>
+          </span>
         </div>
         <span>💡 Arrastra sobre el gráfico para ver rentabilidad de un rango</span>
       </div>

@@ -486,9 +486,11 @@ export function handle({ method, path, params = {}, body = {} }) {
     const mov = s.movements.find((x) => x.id === Number(b));
     if (!mov) return nf('Movimiento no encontrado');
     if (m === 'put') {
+      // Mismo criterio que el backend: un update parcial no pisa los montos.
       Object.assign(mov, {
         date: body.date ?? mov.date, type: body.type ?? mov.type,
-        amount_clp: body.amount_clp ?? null, amount_usd: body.amount_usd ?? null,
+        amount_clp: body.amount_clp ?? mov.amount_clp,
+        amount_usd: body.amount_usd ?? mov.amount_usd,
         notes: body.notes ?? null,
       });
       return ok(mov);
