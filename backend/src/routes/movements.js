@@ -80,8 +80,8 @@ router.put('/:id', async (req, res) => {
     `UPDATE transactions
        SET date       = COALESCE($3, date),
            kind       = COALESCE($4, kind),
-           amount_clp = $5,
-           amount_usd = $6,
+           amount_clp = COALESCE($5, amount_clp),
+           amount_usd = COALESCE($6, amount_usd),
            notes      = $7
      WHERE id = $1 AND user_id = $2 AND kind IN ('aporte','retiro')
      RETURNING *`,

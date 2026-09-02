@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
   getRentabilidad, getMonthlyRentabilidad, getTWR,
-  getSnapshots, getMovements,
+  getSnapshots, getFlujos,
 } from '../services/api';
 import { formatCLP, formatPct, formatDate, colorForValue } from '../utils/formatters';
 import { StatCard } from '../components/ui/Card.jsx';
@@ -11,12 +11,8 @@ import { useAuth } from '../hooks/useAuth.jsx';
 import { usePersistedFetch } from '../hooks/usePersistedFetch.js';
 
 const fetchInit = async () => {
-  const [snap, mov] = await Promise.all([getSnapshots(), getMovements({ type: 'aporte' })]);
-  return {
-    snapshots: snap,
-    aportes:   mov.filter(m => !m.instrument_id)
-                  .map(m => ({ date: m.date?.slice(0, 10), amount: Number(m.amount_clp) })),
-  };
+  const [snap, flujos] = await Promise.all([getSnapshots(), getFlujos()]);
+  return { snapshots: snap, flujos };
 };
 
 export default function Rentabilidad() {
@@ -25,7 +21,7 @@ export default function Rentabilidad() {
     usePersistedFetch(user?.id ? `rentabilidad_init_${user.id}` : null, fetchInit);
 
   const snapshots = initData?.snapshots ?? [];
-  const aportes   = initData?.aportes   ?? [];
+  const flujos    = initData?.flujos    ?? [];
 
   const [range,    setRange]    = useState(null);
   const [rent,     setRent]     = useState(null);
@@ -84,7 +80,7 @@ export default function Rentabilidad() {
       {/* Gráfico con selector + click-and-drag */}
       <EvolutionChart
         snapshots={snapshots}
-        aportes={aportes}
+        flujos={flujos}
         currency={currency}
         defaultRange="ytd"
         onRangeChange={setRange}
